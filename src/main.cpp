@@ -1,4 +1,5 @@
 #include "protocol/tss1.hpp"
+#include "app/console.hpp"
 #include "motion/sweep.hpp"
 #include "transport/serial_transport.hpp"
 #include <chrono>
@@ -20,6 +21,7 @@ double number(const std::string& s) {
 }
 }
 int main(int argc, char** argv) {
+    posmv::setup_console(argc, argv);
     try {
 #ifdef POSMV_HAS_GUI
         if (argc == 1) return launch_gui();

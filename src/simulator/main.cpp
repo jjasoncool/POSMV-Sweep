@@ -1,4 +1,5 @@
 #include "protocol/tss1.hpp"
+#include "app/console.hpp"
 #include "motion/sweep.hpp"
 #include "scheduler/output_scheduler.hpp"
 #include "transport/serial_transport.hpp"
@@ -26,6 +27,7 @@ unsigned integer(const std::string& text) {
 int launch_simulator_gui();
 #endif
 int main(int argc, char** argv) {
+    posmv::setup_console(argc, argv);
 #ifdef POSMV_HAS_GUI
     if (argc == 1) return launch_simulator_gui();
 #endif
