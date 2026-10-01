@@ -1,5 +1,12 @@
 # Architecture and implementation status
 
+> The historical progress notes below are not the current acceptance checklist.
+> See `acceptance.md` for the confirmed delivery contract. The main proxy already
+> has background RX/output workers, thread-safe state, GTK controls and stale
+> input handling. Virtual COM lifecycle management and serial end-to-end
+> verification remain incomplete. Fixed-rate latest-frame resampling is decided;
+> phase restarts at Apply and OFF-to-ON are also decided, not open requirements.
+
 Implemented: independent protocol library, bounded stream parser, preserving
 encoder, elapsed-time sine generator, clipping composer, offline replay CLI,
 CTest harness with no third-party test dependency. GTK4 shell is optional.
