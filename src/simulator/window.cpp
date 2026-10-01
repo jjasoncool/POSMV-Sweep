@@ -1,0 +1,115 @@
+#include <gtk/gtk.h>
+#include "protocol/tss1.hpp"
+#include "simulator/validation.hpp"
+#include "scheduler/output_scheduler.hpp"
+#include "transport/serial_transport.hpp"
+#include <thread>
+#include <mutex>
+#include <fstream>
+#include <array>
+#include <sstream>
+namespace {
+struct State {
+    GtkWidget *tx, *rx, *file, *baud, *rate, *loop, *status;
+    std::jthread sender, receiver;
+    std::mutex mutex;
+    std::string tx_status = "TX 停止", rx_status = "RX 停止";
+    guint timer{};
+    ~State() {
+        sender.request_stop(); receiver.request_stop();
+        if (sender.joinable()) sender.join();
+        if (receiver.joinable()) receiver.join();
+        if (timer) g_source_remove(timer);
+    }
+    void message(bool transmit, std::string text) { std::lock_guard lock(mutex); (transmit ? tx_status : rx_status) = std::move(text); }
+};
+void stop_tx(GtkButton*, gpointer p) { auto* s = static_cast<State*>(p); s->sender.request_stop(); if(s->sender.joinable()) s->sender.join(); s->message(true,"TX 停止"); }
+void stop_rx(GtkButton*, gpointer p) { auto* s = static_cast<State*>(p); s->receiver.request_stop(); if(s->receiver.joinable()) s->receiver.join(); s->message(false,"RX 停止"); }
+void start_tx(GtkButton*, gpointer p) {
+    auto* s = static_cast<State*>(p);
+    stop_tx(nullptr,p);
+    const std::string port = gtk_editable_get_text(GTK_EDITABLE(s->tx));
+    const std::string path = gtk_editable_get_text(GTK_EDITABLE(s->file));
+    const unsigned baud = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(s->baud));
+    const unsigned rates[] = {25,50,100}; const unsigned rate = rates[gtk_drop_down_get_selected(GTK_DROP_DOWN(s->rate))];
+    const bool loop = gtk_check_button_get_active(GTK_CHECK_BUTTON(s->loop));
+    s->sender = std::jthread([s,port,path,baud,rate,loop](std::stop_token token) {
+        try {
+            posmv::validate_serial_throughput(baud,rate);
+            std::vector<posmv::Tss1Frame> frames; posmv::Tss1Parser parser;
+            if(path.empty()) frames.push_back({":000000  0000G 0000  0000",0,0,0,'G'});
+            else {
+                std::ifstream file(path,std::ios::binary); if(!file) throw std::runtime_error("無法讀取 replay 檔案");
+                std::array<char,4096> bytes{};
+                while(file.read(bytes.data(),bytes.size()) || file.gcount()) {
+                    auto batch = parser.feed(std::string_view(bytes.data(),file.gcount()));
+                    frames.insert(frames.end(),batch.begin(),batch.end());
+                }
+                if(file.bad()) throw std::runtime_error("Replay 讀取失敗");
+                parser.finish();
+            }
+            if(frames.empty()) throw std::runtime_error("檔案沒有有效 TSS1");
+            posmv::SerialTransport transport(port,baud); posmv::OutputScheduler clock(rate);
+            std::uint64_t count=0;
+            do {
+                for(const auto& frame:frames) {
+                    if(token.stop_requested()) break;
+                    clock.wait(); if(token.stop_requested()) break;
+                    transport.write(frame.raw+"\r\n"); ++count;
+                    s->message(true,"TX="+std::to_string(count)+" 略過異常="+std::to_string(parser.invalid_frames())+"\n"+frame.raw);
+                }
+            } while(loop && !token.stop_requested());
+            s->message(true,"TX 結束，筆數="+std::to_string(count));
+        } catch(const std::exception& e) { s->message(true,"TX Error: "+std::string(e.what())); }
+    });
+}
+void start_rx(GtkButton*, gpointer p) {
+    auto* s = static_cast<State*>(p); stop_rx(nullptr,p);
+    const std::string port = gtk_editable_get_text(GTK_EDITABLE(s->rx));
+    const unsigned baud = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(s->baud));
+    s->receiver = std::jthread([s,port,baud](std::stop_token token) {
+        try {
+            posmv::SerialTransport transport(port,baud); posmv::StreamValidator validator; posmv::Tss1Parser parser;
+            std::array<char,4096> bytes{}; const auto start=std::chrono::steady_clock::now();
+            std::string latest;
+            while(!token.stop_requested()) {
+                const auto n=transport.read(bytes); const std::string_view chunk(bytes.data(),n);
+                validator.feed(chunk);
+                for(const auto& frame:parser.feed(chunk)) latest=frame.raw+"\nRoll="+std::to_string(frame.roll_deg)+" Pitch="+std::to_string(frame.pitch_deg)+" Heave="+std::to_string(frame.heave_m);
+                const auto seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
+                s->message(false,"RX valid="+std::to_string(validator.valid)+" invalid="+std::to_string(validator.invalid)+" garbage="+std::to_string(validator.garbage_bytes)+" Hz="+std::to_string(seconds>0?validator.valid/seconds:0)+"\n"+latest+"\n"+validator.last_error);
+            }
+            validator.finish();
+            s->message(false,"RX 結束 valid="+std::to_string(validator.valid)+" invalid="+std::to_string(validator.invalid)+"\n"+validator.last_error);
+        } catch(const std::exception& e) { s->message(false,"RX Error: "+std::string(e.what())); }
+    });
+}
+gboolean refresh(gpointer p) {
+    auto* s=static_cast<State*>(p); std::lock_guard lock(s->mutex);
+    gtk_label_set_text(GTK_LABEL(s->status),(s->tx_status+"\n\n"+s->rx_status).c_str()); return G_SOURCE_CONTINUE;
+}
+void activate(GtkApplication* app,gpointer) {
+    auto* window=gtk_application_window_new(app); gtk_window_set_title(GTK_WINDOW(window),"POSMV Simulator — TX / Validator"); gtk_window_set_default_size(GTK_WINDOW(window),800,600);
+    auto* s=new State; auto* box=gtk_box_new(GTK_ORIENTATION_VERTICAL,12);
+    gtk_widget_set_margin_start(box,20); gtk_widget_set_margin_end(box,20); gtk_widget_set_margin_top(box,20); gtk_widget_set_margin_bottom(box,20);
+    auto entry=[&](const char* text) { auto* e=gtk_entry_new(); gtk_entry_set_placeholder_text(GTK_ENTRY(e),text); gtk_box_append(GTK_BOX(box),e); return e; };
+    gtk_box_append(GTK_BOX(box),gtk_label_new("獨立串列測試工具：先啟動 RX，再連接正式程式，最後啟動 TX"));
+    s->tx=entry("TX COM：配對的來源端，例如 COM10（必須已存在）"); s->rx=entry("Validator RX COM：配對的接收端，例如 COM13");
+    s->file=entry("Replay 檔案完整路徑；留空產生固定 0° Roll");
+    s->baud=gtk_spin_button_new_with_range(1200,4000000,1200); gtk_spin_button_set_value(GTK_SPIN_BUTTON(s->baud),38400); gtk_box_append(GTK_BOX(box),s->baud);
+    const char* rates[]={"25 Hz","50 Hz","100 Hz",nullptr}; s->rate=gtk_drop_down_new_from_strings(rates); gtk_box_append(GTK_BOX(box),s->rate);
+    s->loop=gtk_check_button_new_with_label("循環播放直到 Stop"); gtk_check_button_set_active(GTK_CHECK_BUTTON(s->loop),TRUE); gtk_box_append(GTK_BOX(box),s->loop);
+    auto* buttons=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,10); gtk_box_append(GTK_BOX(box),buttons);
+    auto button=[&](const char* text,GCallback callback) { auto* b=gtk_button_new_with_label(text); gtk_box_append(GTK_BOX(buttons),b); g_signal_connect(b,"clicked",callback,s); };
+    button("Start TX",G_CALLBACK(start_tx)); button("Stop TX",G_CALLBACK(stop_tx)); button("Start RX / Validator",G_CALLBACK(start_rx)); button("Stop RX",G_CALLBACK(stop_rx));
+    s->status=gtk_label_new(""); gtk_label_set_wrap(GTK_LABEL(s->status),TRUE); gtk_box_append(GTK_BOX(box),s->status);
+    gtk_box_append(GTK_BOX(box),gtk_label_new("Virtual COM 驅動／配對尚未自動安裝。埠不存在會回報錯誤，不會使用假的 COM。"));
+    s->timer=g_timeout_add(100,refresh,s);
+    g_object_set_data_full(G_OBJECT(window),"state",s,[](gpointer p){delete static_cast<State*>(p);});
+    gtk_window_set_child(GTK_WINDOW(window),box); gtk_window_present(GTK_WINDOW(window));
+}
+}
+int launch_simulator_gui() {
+    auto* app=gtk_application_new("org.posmvsweep.Simulator",G_APPLICATION_DEFAULT_FLAGS); g_signal_connect(app,"activate",G_CALLBACK(activate),nullptr);
+    const int result=g_application_run(G_APPLICATION(app),0,nullptr); g_object_unref(app); return result;
+}

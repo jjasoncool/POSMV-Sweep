@@ -22,7 +22,13 @@ unsigned integer(const std::string& text) {
     return static_cast<unsigned>(value);
 }
 }
+#ifdef POSMV_HAS_GUI
+int launch_simulator_gui();
+#endif
 int main(int argc, char** argv) {
+#ifdef POSMV_HAS_GUI
+    if (argc == 1) return launch_simulator_gui();
+#endif
     try {
         if (argc > 1 && std::string(argv[1]) == "validate") {
             if (argc != 4 || std::string(argv[2]) != "--input")
