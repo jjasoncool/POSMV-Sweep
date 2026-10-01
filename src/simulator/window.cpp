@@ -25,7 +25,13 @@ struct State {
     guint timer{};
     std::atomic<bool> rx_ready{false}, rx_failed{false};
     bool pending_start{};
+    GtkNativeDialog* chooser{};
     ~State() {
+        if (chooser) {
+            g_signal_handlers_disconnect_by_data(chooser, this);
+            gtk_native_dialog_destroy(chooser);
+            g_object_unref(chooser);
+        }
         sender.request_stop(); receiver.request_stop();
         if (sender.joinable()) sender.join();
         if (receiver.joinable()) receiver.join();
@@ -34,7 +40,7 @@ struct State {
     void message(bool transmit, std::string text) { std::lock_guard lock(mutex); (transmit ? tx_status : rx_status) = std::move(text); }
 };
 void stop_tx(GtkButton*, gpointer p) { auto* s = static_cast<State*>(p); s->sender.request_stop(); if(s->sender.joinable()) s->sender.join(); s->message(true,"TX 停止"); }
-void stop_rx(GtkButton*, gpointer p) { auto* s = static_cast<State*>(p); s->receiver.request_stop(); if(s->receiver.joinable()) s->receiver.join(); s->message(false,"RX 停止"); }
+void stop_rx(GtkButton*, gpointer p) { auto* s = static_cast<State*>(p); s->pending_start=false; s->receiver.request_stop(); if(s->receiver.joinable()) s->receiver.join(); s->rx_ready=false; }
 void start_tx(GtkButton*, gpointer p) {
     auto* s = static_cast<State*>(p);
     stop_tx(nullptr,p);
@@ -133,6 +139,7 @@ gboolean refresh(gpointer p) {
 void start_test(GtkButton*, gpointer p) { stop_tx(nullptr,p); start_rx(nullptr,p); static_cast<State*>(p)->pending_start=true; }
 void stop_test(GtkButton*, gpointer p) { static_cast<State*>(p)->pending_start=false; stop_tx(nullptr,p); stop_rx(nullptr,p); }
 void selected(GtkNativeDialog* dialog, int response, gpointer p) {
+    static_cast<State*>(p)->chooser=nullptr;
     if (response == GTK_RESPONSE_ACCEPT) {
         auto* file = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(dialog));
         auto* path = g_file_get_path(file);
@@ -142,8 +149,11 @@ void selected(GtkNativeDialog* dialog, int response, gpointer p) {
     g_object_unref(dialog);
 }
 void choose(GtkButton* button, gpointer p) {
+    auto* state=static_cast<State*>(p);
+    if(state->chooser) { gtk_native_dialog_show(state->chooser); return; }
     auto* dialog = gtk_file_chooser_native_new("選擇 TSS1 capture", GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(button))), GTK_FILE_CHOOSER_ACTION_OPEN, "選擇", "取消");
     g_signal_connect(dialog, "response", G_CALLBACK(selected), p);
+    state->chooser=GTK_NATIVE_DIALOG(dialog);
     gtk_native_dialog_show(GTK_NATIVE_DIALOG(dialog));
 }
 void activate(GtkApplication* app,gpointer) {
