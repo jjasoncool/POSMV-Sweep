@@ -1,0 +1,19 @@
+{
+    "clangd.arguments": [
+        "--query-driver=**/ucrt64/bin/g++.exe,**/ucrt64/bin/c++.exe,**/ucrt64/bin/gcc.exe,/usr/bin/g++,/usr/bin/c++,/usr/bin/gcc"
+    ],
+    "terminal.integrated.profiles.windows": {
+        "MSYS2 UCRT64": {
+            "path": "C:\\msys64\\usr\\bin\\bash.exe",
+            "args": [
+                "--login",
+                "-i"
+            ],
+            "env": {
+                "MSYSTEM": "UCRT64",
+                "CHERE_INVOKING": "1"
+            }
+        }
+    },
+    "terminal.integrated.defaultProfile.windows": "MSYS2 UCRT64",
+}
