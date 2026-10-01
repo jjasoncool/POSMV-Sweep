@@ -3,6 +3,7 @@
 #include "simulator/validation.hpp"
 #include "simulator/fixed_frame_check.hpp"
 #include "diagnostics/intervals.hpp"
+#include "motion/sweep.hpp"
 #include "scheduler/output_scheduler.hpp"
 #include "transport/serial_transport.hpp"
 #include <thread>
@@ -16,7 +17,7 @@
 #include <sstream>
 namespace {
 struct State {
-    GtkWidget *tx, *rx, *file, *baud, *rate, *loop, *status, *strict, *environment, *off_check;
+    GtkWidget *tx, *rx, *file, *baud, *rate, *loop, *status, *strict, *environment, *off_check, *fixed_roll, *sine, *amplitude, *cycle;
     posmv::EnvironmentManager manager;
     std::filesystem::path state_dir;
     std::jthread sender, receiver;
@@ -49,8 +50,13 @@ void start_tx(GtkButton*, gpointer p) {
     const unsigned baud = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(s->baud));
     const unsigned rates[] = {25,50,100}; const unsigned rate = rates[gtk_drop_down_get_selected(GTK_DROP_DOWN(s->rate))];
     const bool loop = gtk_check_button_get_active(GTK_CHECK_BUTTON(s->loop));
+    const double fixed=gtk_spin_button_get_value(GTK_SPIN_BUTTON(s->fixed_roll));
+    const bool sine=gtk_check_button_get_active(GTK_CHECK_BUTTON(s->sine));
+    posmv::SweepConfig sweep;
+    sweep.amplitude_deg=gtk_spin_button_get_value(GTK_SPIN_BUTTON(s->amplitude));
+    sweep.cycle_seconds=gtk_spin_button_get_value(GTK_SPIN_BUTTON(s->cycle));
     const bool strict = gtk_check_button_get_active(GTK_CHECK_BUTTON(s->strict));
-    s->sender = std::jthread([s,port,path,baud,rate,loop,strict](std::stop_token token) {
+    s->sender = std::jthread([s,port,path,baud,rate,loop,strict,fixed,sine,sweep](std::stop_token token) {
         try {
             posmv::validate_serial_throughput(baud,rate);
             std::vector<posmv::Tss1Frame> frames; posmv::Tss1Parser parser;
@@ -83,6 +89,13 @@ void start_rx(GtkButton*, gpointer p) {
     const std::string port = gtk_editable_get_text(GTK_EDITABLE(s->rx));
     const unsigned baud = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(s->baud));
     const bool compare = gtk_check_button_get_active(GTK_CHECK_BUTTON(s->off_check));
+    if(compare && (std::string(gtk_editable_get_text(GTK_EDITABLE(s->file))).size() ||
+        gtk_check_button_get_active(GTK_CHECK_BUTTON(s->sine)) ||
+        gtk_spin_button_get_value(GTK_SPIN_BUTTON(s->fixed_roll)) != 0)) {
+        s->rx_failed=true;
+        s->message(false,"OFF 自動比對只支援固定 0°：請清空 Replay、關閉正弦並設定 Roll=0");
+        return;
+    }
     s->receiver = std::jthread([s,port,baud,compare](std::stop_token token) {
         try {
             posmv::SerialTransport transport(port,baud); s->rx_ready=true; posmv::StreamValidator validator; posmv::Tss1Parser parser;
@@ -174,6 +187,13 @@ void activate(GtkApplication* app,gpointer) {
     s->file=entry("Replay 檔案完整路徑；留空產生固定 0° Roll");
     s->baud=gtk_spin_button_new_with_range(1200,4000000,1200); gtk_spin_button_set_value(GTK_SPIN_BUTTON(s->baud),38400); gtk_box_append(GTK_BOX(box),s->baud);
     const char* rates[]={"25 Hz","50 Hz","100 Hz",nullptr}; s->rate=gtk_drop_down_new_from_strings(rates); gtk_box_append(GTK_BOX(box),s->rate);
+    auto number=[&](const char* label,double low,double high,double step,double value) {
+        gtk_box_append(GTK_BOX(box),gtk_label_new(label));
+        auto* spin=gtk_spin_button_new_with_range(low,high,step); gtk_spin_button_set_value(GTK_SPIN_BUTTON(spin),value); gtk_box_append(GTK_BOX(box),spin); return spin;
+    };
+    s->fixed_roll=number("檔案留空：固定 Roll (deg)",-90,90,0.01,0);
+    s->sine=gtk_check_button_new_with_label("檔案留空時使用正弦 Roll"); gtk_box_append(GTK_BOX(box),s->sine);
+    s->amplitude=number("正弦幅度 ±deg",0,90,0.1,10); s->cycle=number("完整週期 sec",0.1,3600,0.1,4);
     s->loop=gtk_check_button_new_with_label("循環播放直到 Stop"); gtk_check_button_set_active(GTK_CHECK_BUTTON(s->loop),TRUE); gtk_box_append(GTK_BOX(box),s->loop);
     s->strict=gtk_check_button_new_with_label("嚴格模式：異常或垃圾資料禁止發送"); gtk_box_append(GTK_BOX(box),s->strict);
     s->off_check=gtk_check_button_new_with_label("固定 0° frame OFF 比對（Replay 留空、Sweep OFF）"); gtk_box_append(GTK_BOX(box),s->off_check);
@@ -186,7 +206,7 @@ void activate(GtkApplication* app,gpointer) {
     gtk_box_append(GTK_BOX(box),gtk_label_new("Virtual COM 驅動／配對尚未自動安裝。埠不存在會回報錯誤，不會使用假的 COM。"));
     s->timer=g_timeout_add(100,refresh,s);
     g_object_set_data_full(G_OBJECT(window),"state",s,[](gpointer p){delete static_cast<State*>(p);});
-    gtk_window_set_child(GTK_WINDOW(window),box); gtk_window_present(GTK_WINDOW(window));
+    auto* scroll=gtk_scrolled_window_new(); gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll),box); gtk_window_set_child(GTK_WINDOW(window),scroll); gtk_window_present(GTK_WINDOW(window));
 }
 }
 int launch_simulator_gui() {
