@@ -39,7 +39,8 @@ try {
         # Pinned official distribution. Never disable signature enforcement.
         $archive = Join-Path $StateDirectory 'com0com-3.0.0.0.zip'
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        Invoke-WebRequest -UseBasicParsing -Uri 'https://downloads.sourceforge.net/project/com0com/com0com/3.0.0.0/com0com-3.0.0.0-i386-and-x64-signed.zip' -OutFile $archive
+        & "$env:SystemRoot\System32\curl.exe" -fL --max-time 120 'https://downloads.sourceforge.net/project/com0com/com0com/3.0.0.0/com0com-3.0.0.0-i386-and-x64-signed.zip' -o $archive
+        if ($LASTEXITCODE -ne 0) { throw 'Driver download failed; no installer executed.' }
         if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne '6e5d4359865277430d4ae88c73fb7e648a0ed8e81aea5002478179cfcb0bb0e1') { throw 'Driver archive hash mismatch; refusing execution.' }
         $extract = Join-Path $StateDirectory 'driver-installer'
         Expand-Archive -Force -LiteralPath $archive -DestinationPath $extract
