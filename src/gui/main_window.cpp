@@ -1,11 +1,13 @@
 #include <gtk/gtk.h>
 #include "gui/port_selector.hpp"
+#include "gui/roll_chart.hpp"
 #include "app/proxy_engine.hpp"
 #include <sstream>
 #include <iomanip>
 namespace {
 struct Controller {
     posmv::ProxyEngine engine;
+    posmv::RollChart chart;
     GtkWidget *input, *output, *baud, *rate, *angle, *cycle, *enable, *simulation, *invert, *status, *motion, *diagnostics, *timeout;
     bool syncing{};
     guint timer{};
@@ -56,6 +58,7 @@ gboolean refresh(gpointer data) {
         c->syncing = false;
     }
     if (s.connected || s.status.starts_with("Error:")) gtk_label_set_text(GTK_LABEL(c->status), s.status.c_str());
+    if(s.connected && !s.stale && s.output_count) c->chart.add(s.real,s.offset,s.output);
     std::ostringstream motion, diagnostics;
     motion << std::fixed << std::setprecision(2) << "Real Roll: " << s.real << "°   Offset: " << s.offset << "°   Output: " << s.output << "°";
     diagnostics << std::fixed << std::setprecision(2) << "Input: " << s.input_rate << " Hz   Output: " << s.output_rate << " Hz\nRX: " << s.input_count << "   TX: " << s.output_count << "   Invalid: " << s.invalid << "   Clipped: " << s.clipped << "\nLate (>1ms): " << s.late << "   Maximum lateness: " << s.lateness_ms << " ms";
@@ -104,6 +107,8 @@ void activate(GtkApplication* application, gpointer) {
     for (auto* widget : {c->status, c->motion, c->diagnostics}) gtk_box_append(GTK_BOX(box), widget);
     gtk_box_append(GTK_BOX(box), gtk_label_new("CENTER → LEFT → CENTER → RIGHT → CENTER"));
     gtk_box_append(GTK_BOX(box), gtk_label_new("開發版：輸入過期停止輸出；恢復後 Sweep OFF。實體 Roll 方向尚未驗證。"));
+    gtk_box_append(GTK_BOX(box),gtk_label_new("最近 10 秒：藍 Real ／ 黃 Offset ／ 綠 Output"));
+    gtk_box_append(GTK_BOX(box),c->chart.create());
     c->timer = g_timeout_add(100, refresh, c);
     g_object_set_data_full(G_OBJECT(window), "controller", c, destroy);
     gtk_window_set_child(GTK_WINDOW(window), box);
