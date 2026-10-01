@@ -9,8 +9,10 @@ plain TSS1 captures have no timestamps. This is deterministic offline conversion
 NOT live output scheduling or recovery of actual capture timing. Processing is
 unpaced and output rate only describes the assumed input timeline.
 
-Pending: steady_clock absolute-deadline worker, timing diagnostics, transport
-interface and Windows serial implementation, live motion state and thread-safe
+Added: simulator, reusable steady_clock deadline pacing and Windows serial
+transport, plus bounded serial-to-file capture. See testing.md for limitations.
+Pending: independent main-proxy output worker, full timing diagnostics,
+live motion state and thread-safe
 configuration, full GTK operator controls, logging and hardware commissioning.
 GTK must never perform protocol work or precise scheduling. The current shell
 does not claim to be the first usable full operator version.

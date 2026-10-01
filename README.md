@@ -1,5 +1,9 @@
 # POSMV-Sweep
 
+Testing utilities: `posmv-simulator.exe` provides generated/replay file or COM
+output. Main CLI also offers bounded serial-to-file capture for virtual COM
+validation. See `docs/testing.md` for commands and limitations.
+
 POS MV TSS1 Motion Sweep Proxy. Windows 10/11 x64, C++20, CMake,
 MSYS2 UCRT64. Offline development first; not commissioned for instrumentation use.
 

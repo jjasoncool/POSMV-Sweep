@@ -1,5 +1,6 @@
 #include "protocol/tss1.hpp"
 #include "motion/sweep.hpp"
+#include "simulator/validation.hpp"
 #include <cmath>
 #include <iostream>
 #include <fstream>
@@ -18,6 +19,12 @@ int main(int argc, char** argv) {
         check(std::abs(frames[0].roll_deg + 0.53) < 1e-9);
         check(posmv::encode_roll(frames[0], 1.29) == ":000011 -0355G 0129  0129\r\n");
         const std::string record = ":000011 -0355G-0053  0129\r\n";
+        posmv::StreamValidator validator;
+        validator.feed(record);
+        validator.finish();
+        check(validator.clean());
+        validator.feed("garbage");
+        check(!validator.clean() && validator.garbage_bytes == 7);
         for (std::size_t split = 0; split <= record.size(); ++split) {
             posmv::Tss1Parser chunks;
             auto first = chunks.feed(record.substr(0, split));
