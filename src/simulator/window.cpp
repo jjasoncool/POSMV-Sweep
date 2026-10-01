@@ -5,8 +5,7 @@
 #include "transport/serial_transport.hpp"
 #include <thread>
 #include <atomic>
-#include <windows.h>
-#include <shellapi.h>
+#include "platform/environment_manager.hpp"
 #include <filesystem>
 #include "simulator/replay_source.hpp"
 #include <mutex>
@@ -16,7 +15,7 @@
 namespace {
 struct State {
     GtkWidget *tx, *rx, *file, *baud, *rate, *loop, *status, *strict, *environment;
-    HANDLE manager{};
+    posmv::EnvironmentManager manager;
     std::filesystem::path state_dir;
     std::jthread sender, receiver;
     std::mutex mutex;
@@ -29,7 +28,6 @@ struct State {
         if (sender.joinable()) sender.join();
         if (receiver.joinable()) receiver.join();
         if (timer) g_source_remove(timer);
-        if (manager) CloseHandle(manager);
     }
     void message(bool transmit, std::string text) { std::lock_guard lock(mutex); (transmit ? tx_status : rx_status) = std::move(text); }
 };
@@ -95,25 +93,17 @@ void start_rx(GtkButton*, gpointer p) {
 }
 void manage(GtkButton* button, gpointer p) {
     auto* s=static_cast<State*>(p);
-    if(s->manager) return;
+    if(s->manager.active()) return;
     stop_tx(nullptr,p); stop_rx(nullptr,p); s->pending_start=false;
-    wchar_t exe[32768]; GetModuleFileNameW(nullptr,exe,32768);
-    auto script=std::filesystem::path(exe).parent_path()/"Manage-VirtualCom.ps1";
     const auto* action=static_cast<const char*>(g_object_get_data(G_OBJECT(button),"action"));
-    std::wstring verb;
-    for(const char* c=action; *c; ++c) verb+=wchar_t(*c);
-    std::wstring args=L"-NoProfile -File \""+script.wstring()+L"\" -Action "+verb+L" -StateDirectory \""+s->state_dir.wstring()+L"\"";
-    SHELLEXECUTEINFOW info{}; info.cbSize=sizeof(info); info.fMask=SEE_MASK_NOCLOSEPROCESS;
-    info.lpVerb=(verb==L"Inspect" || verb==L"Test")?L"open":L"runas";
-    info.lpFile=L"powershell.exe"; info.lpParameters=args.c_str(); info.nShow=SW_HIDE;
-    if(!ShellExecuteExW(&info)) { gtk_label_set_text(GTK_LABEL(s->environment),"管理操作未啟動／權限要求被取消"); return; }
-    s->manager=info.hProcess;
+    try { s->manager.start(action,s->state_dir); }
+    catch(const std::exception& e) { gtk_label_set_text(GTK_LABEL(s->environment),e.what()); return; }
     gtk_label_set_text(GTK_LABEL(s->environment),"正在檢查／管理配對，請完成 Windows 權限提示…");
 }
 gboolean refresh(gpointer p) {
     auto* s=static_cast<State*>(p);
-    if(s->manager && WaitForSingleObject(s->manager,0)==WAIT_OBJECT_0) {
-        DWORD code=1; GetExitCodeProcess(s->manager,&code); CloseHandle(s->manager); s->manager=nullptr;
+    if(auto completed=s->manager.poll()) {
+        auto code=*completed;
         std::ifstream report(s->state_dir/"result.json",std::ios::binary);
         std::string text((std::istreambuf_iterator<char>(report)),{});
         gtk_label_set_text(GTK_LABEL(s->environment),text.empty()?"管理操作失敗，請確認驅動及 PowerShell 執行政策":text.c_str());
