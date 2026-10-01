@@ -104,7 +104,7 @@ void manage(GtkButton* button, gpointer p) {
     for(const char* c=action; *c; ++c) verb+=wchar_t(*c);
     std::wstring args=L"-NoProfile -File \""+script.wstring()+L"\" -Action "+verb+L" -StateDirectory \""+s->state_dir.wstring()+L"\"";
     SHELLEXECUTEINFOW info{}; info.cbSize=sizeof(info); info.fMask=SEE_MASK_NOCLOSEPROCESS;
-    info.lpVerb=verb==L"Inspect"?L"open":L"runas";
+    info.lpVerb=(verb==L"Inspect" || verb==L"Test")?L"open":L"runas";
     info.lpFile=L"powershell.exe"; info.lpParameters=args.c_str(); info.nShow=SW_HIDE;
     if(!ShellExecuteExW(&info)) { gtk_label_set_text(GTK_LABEL(s->environment),"管理操作未啟動／權限要求被取消"); return; }
     s->manager=info.hProcess;
@@ -156,8 +156,8 @@ void activate(GtkApplication* app,gpointer) {
     s->environment=gtk_label_new("Virtual COM：尚未檢查；建立需要已安裝 com0com。取消 UAC 不會建立配對。");
     gtk_label_set_wrap(GTK_LABEL(s->environment),TRUE); gtk_box_append(GTK_BOX(box),s->environment);
     auto* management=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,8); gtk_box_append(GTK_BOX(box),management);
-    for(auto action:{"Inspect","Create","Remove"}) {
-        const char* title=std::string(action)=="Inspect"?"檢查環境":std::string(action)=="Create"?"建立兩組測試配對（UAC）":"移除本程式配對（UAC）";
+    for(auto action:{"Inspect","Create","Remove","Test"}) {
+        const char* title=std::string(action)=="Inspect"?"檢查環境":std::string(action)=="Create"?"建立兩組測試配對（UAC）":std::string(action)=="Test"?"配對雙向自測":"移除本程式配對（UAC）";
         auto* b=gtk_button_new_with_label(title); g_object_set_data(G_OBJECT(b),"action",const_cast<char*>(action));
         g_signal_connect(b,"clicked",G_CALLBACK(manage),s); gtk_box_append(GTK_BOX(management),b);
     }

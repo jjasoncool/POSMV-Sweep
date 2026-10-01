@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('Inspect','Create','Remove')][string]$Action = 'Inspect',
+    [ValidateSet('Inspect','Create','Remove','Test')][string]$Action = 'Inspect',
     [string]$SetupPath,
     [Parameter(Mandatory=$true)][string]$StateDirectory
 )
@@ -87,7 +87,30 @@ try {
     foreach ($pair in $owned) {
         if (-not $pairs.ContainsKey([string]$pair.Id) -or $ports -notcontains $pair.A -or $ports -notcontains $pair.B) { $ready=$false }
     }
-    $result = @{ Ok=$true; Ready=$ready; Setup=$SetupPath; Pairs=@($owned); Message='Driver commands completed; run connectivity self-test before use.' }
+    $tested = $false
+    if ($Action -eq 'Test') {
+        if (-not $ready) { throw 'Two owned, present pairs are required for self-test.' }
+        foreach ($pair in $owned) {
+            $a = New-Object IO.Ports.SerialPort($pair.A,38400,'None',8,'One')
+            $b = New-Object IO.Ports.SerialPort($pair.B,38400,'None',8,'One')
+            try {
+                $a.ReadTimeout=1000; $b.ReadTimeout=1000
+                $a.WriteTimeout=1000; $b.WriteTimeout=1000
+                $a.Open(); $b.Open()
+                $a.DiscardInBuffer(); $b.DiscardInBuffer()
+                $packet = ':000011 -0355G-0053  0129' + "`r`n"
+                $a.Write($packet)
+                $received=''
+                while ($received.Length -lt $packet.Length) { $received += [char]$b.ReadChar() }
+                if ($received -cne $packet) { throw 'Forward pair bytes mismatch' }
+                $b.Write($packet); $received=''
+                while ($received.Length -lt $packet.Length) { $received += [char]$a.ReadChar() }
+                if ($received -cne $packet) { throw 'Reverse pair bytes mismatch' }
+            } finally { $a.Dispose(); $b.Dispose() }
+        }
+        $tested=$true
+    }
+    $result = @{ Ok=$true; Ready=$ready; ConnectivityTested=$tested; Setup=$SetupPath; Pairs=@($owned); Message='Pair enumeration is not a proxy end-to-end test.' }
     ConvertTo-Json -Depth 6 $result | Set-Content -Encoding UTF8 $resultPath
     # Simple machine-readable mapping alongside the human-readable JSON.
     $mapping = Join-Path $StateDirectory 'ports.txt'
