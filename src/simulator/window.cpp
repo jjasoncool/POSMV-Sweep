@@ -1,6 +1,7 @@
 #include <gtk/gtk.h>
 #include "protocol/tss1.hpp"
 #include "simulator/validation.hpp"
+#include "simulator/fixed_frame_check.hpp"
 #include "scheduler/output_scheduler.hpp"
 #include "transport/serial_transport.hpp"
 #include <thread>
@@ -14,7 +15,7 @@
 #include <sstream>
 namespace {
 struct State {
-    GtkWidget *tx, *rx, *file, *baud, *rate, *loop, *status, *strict, *environment;
+    GtkWidget *tx, *rx, *file, *baud, *rate, *loop, *status, *strict, *environment, *off_check;
     posmv::EnvironmentManager manager;
     std::filesystem::path state_dir;
     std::jthread sender, receiver;
@@ -74,20 +75,22 @@ void start_rx(GtkButton*, gpointer p) {
     s->rx_ready=false; s->rx_failed=false;
     const std::string port = gtk_editable_get_text(GTK_EDITABLE(s->rx));
     const unsigned baud = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(s->baud));
-    s->receiver = std::jthread([s,port,baud](std::stop_token token) {
+    const bool compare = gtk_check_button_get_active(GTK_CHECK_BUTTON(s->off_check));
+    s->receiver = std::jthread([s,port,baud,compare](std::stop_token token) {
         try {
             posmv::SerialTransport transport(port,baud); s->rx_ready=true; posmv::StreamValidator validator; posmv::Tss1Parser parser;
             std::array<char,4096> bytes{}; const auto start=std::chrono::steady_clock::now();
+            posmv::FixedFrameCheck off(std::string(":000000  0000G 0000  0000") + char(13) + char(10));
             std::string latest;
             while(!token.stop_requested()) {
                 const auto n=transport.read(bytes); const std::string_view chunk(bytes.data(),n);
-                validator.feed(chunk);
+                validator.feed(chunk); if(compare) off.feed(chunk);
                 for(const auto& frame:parser.feed(chunk)) latest=frame.raw+"\nRoll="+std::to_string(frame.roll_deg)+" Pitch="+std::to_string(frame.pitch_deg)+" Heave="+std::to_string(frame.heave_m);
                 const auto seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
                 s->message(false,"RX valid="+std::to_string(validator.valid)+" invalid="+std::to_string(validator.invalid)+" garbage="+std::to_string(validator.garbage_bytes)+" Hz="+std::to_string(seconds>0?validator.valid/seconds:0)+"\n"+latest+"\n"+validator.last_error);
             }
-            validator.finish();
-            s->message(false,"RX 結束 valid="+std::to_string(validator.valid)+" invalid="+std::to_string(validator.invalid)+"\n"+validator.last_error);
+            validator.finish(); off.finish();
+            s->message(false,"RX 結束 valid="+std::to_string(validator.valid)+" invalid="+std::to_string(validator.invalid)+"\n"+validator.last_error+(compare ? (off.passed()?" | OFF PASS":" | OFF NOT PASS") : ""));
         } catch(const std::exception& e) { s->rx_failed=true; s->rx_ready=false; s->message(false,"RX Error: "+std::string(e.what())); }
     });
 }
@@ -157,6 +160,7 @@ void activate(GtkApplication* app,gpointer) {
     const char* rates[]={"25 Hz","50 Hz","100 Hz",nullptr}; s->rate=gtk_drop_down_new_from_strings(rates); gtk_box_append(GTK_BOX(box),s->rate);
     s->loop=gtk_check_button_new_with_label("循環播放直到 Stop"); gtk_check_button_set_active(GTK_CHECK_BUTTON(s->loop),TRUE); gtk_box_append(GTK_BOX(box),s->loop);
     s->strict=gtk_check_button_new_with_label("嚴格模式：異常或垃圾資料禁止發送"); gtk_box_append(GTK_BOX(box),s->strict);
+    s->off_check=gtk_check_button_new_with_label("固定 0° frame OFF 比對（Replay 留空、Sweep OFF）"); gtk_box_append(GTK_BOX(box),s->off_check);
     auto* buttons=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,10); gtk_box_append(GTK_BOX(box),buttons);
     auto button=[&](const char* text,GCallback callback) { auto* b=gtk_button_new_with_label(text); gtk_box_append(GTK_BOX(buttons),b); g_signal_connect(b,"clicked",callback,s); };
     button("選擇文字檔",G_CALLBACK(choose));
