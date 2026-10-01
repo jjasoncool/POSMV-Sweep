@@ -2,6 +2,7 @@
 #include "protocol/tss1.hpp"
 #include "simulator/validation.hpp"
 #include "simulator/fixed_frame_check.hpp"
+#include "diagnostics/intervals.hpp"
 #include "scheduler/output_scheduler.hpp"
 #include "transport/serial_transport.hpp"
 #include <thread>
@@ -82,12 +83,17 @@ void start_rx(GtkButton*, gpointer p) {
             std::array<char,4096> bytes{}; const auto start=std::chrono::steady_clock::now();
             posmv::FixedFrameCheck off(std::string(":000000  0000G 0000  0000") + char(13) + char(10));
             std::string latest;
+            posmv::Intervals intervals;
             while(!token.stop_requested()) {
                 const auto n=transport.read(bytes); const std::string_view chunk(bytes.data(),n);
-                validator.feed(chunk); if(compare) off.feed(chunk);
-                for(const auto& frame:parser.feed(chunk)) latest=frame.raw+"\nRoll="+std::to_string(frame.roll_deg)+" Pitch="+std::to_string(frame.pitch_deg)+" Heave="+std::to_string(frame.heave_m);
                 const auto seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
-                s->message(false,"RX valid="+std::to_string(validator.valid)+" invalid="+std::to_string(validator.invalid)+" garbage="+std::to_string(validator.garbage_bytes)+" Hz="+std::to_string(seconds>0?validator.valid/seconds:0)+"\n"+latest+"\n"+validator.last_error);
+                const auto frames = validator.feed(chunk); if(compare) off.feed(chunk);
+                for(const auto& frame:frames) {
+                    intervals.observe(seconds);
+                    latest=frame.raw+"\nRoll="+std::to_string(frame.roll_deg)+" Pitch="+std::to_string(frame.pitch_deg)+" Heave="+std::to_string(frame.heave_m);
+                }
+                const auto timing = "\nObserved RX interval avg/min/max ms: " + std::to_string(intervals.average_ms) + " / " + std::to_string(intervals.minimum_ms) + " / " + std::to_string(intervals.maximum_ms) + " (batched frames may have zero interval)";
+                s->message(false,"RX valid="+std::to_string(validator.valid)+" invalid="+std::to_string(validator.invalid)+" garbage="+std::to_string(validator.garbage_bytes)+" Session Hz="+std::to_string(seconds>0?validator.valid/seconds:0)+timing+"\n"+latest+"\n"+validator.last_error);
             }
             validator.finish(); off.finish();
             s->message(false,"RX 結束 valid="+std::to_string(validator.valid)+" invalid="+std::to_string(validator.invalid)+"\n"+validator.last_error+(compare ? (off.passed()?" | OFF PASS":" | OFF NOT PASS") : ""));
