@@ -4,17 +4,22 @@
 #include "scheduler/output_scheduler.hpp"
 #include "transport/serial_transport.hpp"
 #include <thread>
+#include <atomic>
+#include <filesystem>
+#include "simulator/replay_source.hpp"
 #include <mutex>
 #include <fstream>
 #include <array>
 #include <sstream>
 namespace {
 struct State {
-    GtkWidget *tx, *rx, *file, *baud, *rate, *loop, *status;
+    GtkWidget *tx, *rx, *file, *baud, *rate, *loop, *status, *strict;
     std::jthread sender, receiver;
     std::mutex mutex;
     std::string tx_status = "TX 停止", rx_status = "RX 停止";
     guint timer{};
+    std::atomic<bool> rx_ready{false}, rx_failed{false};
+    bool pending_start{};
     ~State() {
         sender.request_stop(); receiver.request_stop();
         if (sender.joinable()) sender.join();
@@ -33,20 +38,18 @@ void start_tx(GtkButton*, gpointer p) {
     const unsigned baud = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(s->baud));
     const unsigned rates[] = {25,50,100}; const unsigned rate = rates[gtk_drop_down_get_selected(GTK_DROP_DOWN(s->rate))];
     const bool loop = gtk_check_button_get_active(GTK_CHECK_BUTTON(s->loop));
-    s->sender = std::jthread([s,port,path,baud,rate,loop](std::stop_token token) {
+    const bool strict = gtk_check_button_get_active(GTK_CHECK_BUTTON(s->strict));
+    s->sender = std::jthread([s,port,path,baud,rate,loop,strict](std::stop_token token) {
         try {
             posmv::validate_serial_throughput(baud,rate);
             std::vector<posmv::Tss1Frame> frames; posmv::Tss1Parser parser;
             if(path.empty()) frames.push_back({":000000  0000G 0000  0000",0,0,0,'G'});
             else {
-                std::ifstream file(path,std::ios::binary); if(!file) throw std::runtime_error("無法讀取 replay 檔案");
-                std::array<char,4096> bytes{};
-                while(file.read(bytes.data(),bytes.size()) || file.gcount()) {
-                    auto batch = parser.feed(std::string_view(bytes.data(),file.gcount()));
-                    frames.insert(frames.end(),batch.begin(),batch.end());
-                }
-                if(file.bad()) throw std::runtime_error("Replay 讀取失敗");
-                parser.finish();
+                std::ifstream file(std::filesystem::u8path(path),std::ios::binary);
+                if(!file) throw std::runtime_error("無法讀取 replay 檔案");
+                auto source = posmv::read_replay(file, strict, token);
+                frames = std::move(source.frames);
+                s->message(true,"預檢有效="+std::to_string(frames.size())+" 異常="+std::to_string(source.invalid)+" 垃圾="+std::to_string(source.garbage));
             }
             if(frames.empty()) throw std::runtime_error("檔案沒有有效 TSS1");
             posmv::SerialTransport transport(port,baud); posmv::OutputScheduler clock(rate);
@@ -65,11 +68,12 @@ void start_tx(GtkButton*, gpointer p) {
 }
 void start_rx(GtkButton*, gpointer p) {
     auto* s = static_cast<State*>(p); stop_rx(nullptr,p);
+    s->rx_ready=false; s->rx_failed=false;
     const std::string port = gtk_editable_get_text(GTK_EDITABLE(s->rx));
     const unsigned baud = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(s->baud));
     s->receiver = std::jthread([s,port,baud](std::stop_token token) {
         try {
-            posmv::SerialTransport transport(port,baud); posmv::StreamValidator validator; posmv::Tss1Parser parser;
+            posmv::SerialTransport transport(port,baud); s->rx_ready=true; posmv::StreamValidator validator; posmv::Tss1Parser parser;
             std::array<char,4096> bytes{}; const auto start=std::chrono::steady_clock::now();
             std::string latest;
             while(!token.stop_requested()) {
@@ -81,15 +85,18 @@ void start_rx(GtkButton*, gpointer p) {
             }
             validator.finish();
             s->message(false,"RX 結束 valid="+std::to_string(validator.valid)+" invalid="+std::to_string(validator.invalid)+"\n"+validator.last_error);
-        } catch(const std::exception& e) { s->message(false,"RX Error: "+std::string(e.what())); }
+        } catch(const std::exception& e) { s->rx_failed=true; s->rx_ready=false; s->message(false,"RX Error: "+std::string(e.what())); }
     });
 }
 gboolean refresh(gpointer p) {
-    auto* s=static_cast<State*>(p); std::lock_guard lock(s->mutex);
+    auto* s=static_cast<State*>(p);
+    if(s->pending_start && s->rx_failed) { s->pending_start=false; s->message(true,"RX 開啟失敗，未啟動 TX"); }
+    else if(s->pending_start && s->rx_ready) { s->pending_start=false; start_tx(nullptr,p); }
+    std::lock_guard lock(s->mutex);
     gtk_label_set_text(GTK_LABEL(s->status),(s->tx_status+"\n\n"+s->rx_status).c_str()); return G_SOURCE_CONTINUE;
 }
-void start_test(GtkButton*, gpointer p) { start_rx(nullptr,p); start_tx(nullptr,p); }
-void stop_test(GtkButton*, gpointer p) { stop_tx(nullptr,p); stop_rx(nullptr,p); }
+void start_test(GtkButton*, gpointer p) { stop_tx(nullptr,p); start_rx(nullptr,p); static_cast<State*>(p)->pending_start=true; }
+void stop_test(GtkButton*, gpointer p) { static_cast<State*>(p)->pending_start=false; stop_tx(nullptr,p); stop_rx(nullptr,p); }
 void selected(GtkNativeDialog* dialog, int response, gpointer p) {
     if (response == GTK_RESPONSE_ACCEPT) {
         auto* file = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(dialog));
@@ -115,6 +122,7 @@ void activate(GtkApplication* app,gpointer) {
     s->baud=gtk_spin_button_new_with_range(1200,4000000,1200); gtk_spin_button_set_value(GTK_SPIN_BUTTON(s->baud),38400); gtk_box_append(GTK_BOX(box),s->baud);
     const char* rates[]={"25 Hz","50 Hz","100 Hz",nullptr}; s->rate=gtk_drop_down_new_from_strings(rates); gtk_box_append(GTK_BOX(box),s->rate);
     s->loop=gtk_check_button_new_with_label("循環播放直到 Stop"); gtk_check_button_set_active(GTK_CHECK_BUTTON(s->loop),TRUE); gtk_box_append(GTK_BOX(box),s->loop);
+    s->strict=gtk_check_button_new_with_label("嚴格模式：異常或垃圾資料禁止發送"); gtk_box_append(GTK_BOX(box),s->strict);
     auto* buttons=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,10); gtk_box_append(GTK_BOX(box),buttons);
     auto button=[&](const char* text,GCallback callback) { auto* b=gtk_button_new_with_label(text); gtk_box_append(GTK_BOX(buttons),b); g_signal_connect(b,"clicked",callback,s); };
     button("選擇文字檔",G_CALLBACK(choose));
