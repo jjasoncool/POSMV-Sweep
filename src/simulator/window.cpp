@@ -14,10 +14,11 @@
 #include <mutex>
 #include <fstream>
 #include <array>
+#include <span>
 #include <sstream>
 namespace {
 struct State {
-    GtkWidget *tx, *rx, *file, *baud, *rate, *loop, *status, *strict, *environment, *off_check, *fixed_roll, *sine, *amplitude, *cycle;
+    GtkWidget *tx, *rx, *file, *baud, *rate, *loop, *status, *strict, *environment, *proxy_ports, *off_check, *fixed_roll, *sine, *amplitude, *cycle;
     posmv::EnvironmentManager manager;
     std::filesystem::path state_dir;
     std::jthread sender, receiver;
@@ -123,26 +124,30 @@ void manage(GtkButton* button, gpointer p) {
     auto* s=static_cast<State*>(p);
     if(s->manager.active()) return;
     stop_tx(nullptr,p); stop_rx(nullptr,p); s->pending_start=false;
-    const auto* action=static_cast<const char*>(g_object_get_data(G_OBJECT(button),"action"));
+    const std::string action=static_cast<const char*>(g_object_get_data(G_OBJECT(button),"action"));
     try { s->manager.start(action,s->state_dir); }
     catch(const std::exception& e) { gtk_label_set_text(GTK_LABEL(s->environment),e.what()); return; }
-    gtk_label_set_text(GTK_LABEL(s->environment),"正在檢查／管理配對，請完成 Windows 權限提示…");
+    gtk_label_set_text(GTK_LABEL(s->environment),action=="inspect"||action=="test"?"處理中…":"處理中…請完成 Windows 權限提示（UAC）");
 }
 gboolean refresh(gpointer p) {
     auto* s=static_cast<State*>(p);
     if(auto completed=s->manager.poll()) {
-        auto code=*completed;
-        std::ifstream report(s->state_dir/"result.json",std::ios::binary);
-        std::string text((std::istreambuf_iterator<char>(report)),{});
-        gtk_label_set_text(GTK_LABEL(s->environment),text.empty()?"管理操作失敗，請確認驅動及 PowerShell 執行政策":text.c_str());
-        if(code==0) {
-            std::ifstream map(s->state_dir/"ports.txt"); std::string tx,input,output,rx;
-            if(map>>tx>>input>>output>>rx) {
-                gtk_editable_set_text(GTK_EDITABLE(s->tx),tx.c_str()); gtk_editable_set_text(GTK_EDITABLE(s->rx),rx.c_str());
-                std::string hint="Sweep Input: "+input+" / Output: "+output+" (pair listed; connectivity not tested)";
-                gtk_label_set_text(GTK_LABEL(s->environment),hint.c_str());
-            }
+        std::ifstream report(s->state_dir/"result.txt",std::ios::binary);
+        std::string text, roles;
+        for(std::string line; std::getline(report,line);) {
+            if(line.starts_with("message=")) text+=(text.empty()?"":"\n")+line.substr(8);
+            else if(line.starts_with("roles=")) roles=line.substr(6);
         }
+        if(text.empty()) text="Virtual COM 管理操作沒有產生結果（結束代碼 "+std::to_string(*completed)+"）";
+        gtk_label_set_text(GTK_LABEL(s->environment),text.c_str());
+        std::istringstream fields(roles); std::string tx,input,output,rx;
+        if(fields>>tx>>input>>output>>rx) {
+            gtk_editable_set_text(GTK_EDITABLE(s->tx),tx.c_str()); gtk_editable_set_text(GTK_EDITABLE(s->rx),rx.c_str());
+            const auto baud=std::to_string(gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(s->baud)));
+            auto* markup=g_markup_printf_escaped("<big><b>正式程式：「輸入 COM」選 %s，「輸出 COM」選 %s（%s bps）</b></big>",
+                input.c_str(),output.c_str(),baud.c_str());
+            gtk_label_set_markup(GTK_LABEL(s->proxy_ports),markup); g_free(markup);
+        } else gtk_label_set_text(GTK_LABEL(s->proxy_ports),"測試環境尚未就緒：完成後，這裡會顯示正式程式要選的兩個埠");
     }
     if(s->pending_start && s->rx_failed) { s->pending_start=false; s->message(true,"RX 開啟失敗，未啟動 TX"); }
     else if(s->pending_start && s->rx_ready) { s->pending_start=false; start_tx(nullptr,p); }
@@ -175,13 +180,18 @@ void activate(GtkApplication* app,gpointer) {
     gtk_widget_set_margin_start(box,20); gtk_widget_set_margin_end(box,20); gtk_widget_set_margin_top(box,20); gtk_widget_set_margin_bottom(box,20);
     auto entry=[&](const char* text) { auto* e=gtk_entry_new(); gtk_entry_set_placeholder_text(GTK_ENTRY(e),text); gtk_box_append(GTK_BOX(box),e); return e; };
     gtk_box_append(GTK_BOX(box),gtk_label_new("獨立串列測試工具：先啟動 RX，再連接正式程式，最後啟動 TX"));
-    s->environment=gtk_label_new("Virtual COM：尚未檢查；建立需要已安裝 com0com。取消 UAC 不會建立配對。");
+    s->proxy_ports=gtk_label_new("測試環境尚未就緒：完成後，這裡會顯示正式程式要選的兩個埠");
+    gtk_label_set_wrap(GTK_LABEL(s->proxy_ports),TRUE); gtk_box_append(GTK_BOX(box),s->proxy_ports);
+    s->environment=gtk_label_new("正在檢查 Virtual COM 環境…");
     gtk_label_set_wrap(GTK_LABEL(s->environment),TRUE); gtk_box_append(GTK_BOX(box),s->environment);
-    auto* management=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,8); gtk_box_append(GTK_BOX(box),management);
-    for(auto action:{"Inspect","Install","Create","Remove","Test"}) {
-        const char* title=std::string(action)=="Install"?"下載並安裝 com0com（需網路／UAC）":std::string(action)=="Inspect"?"檢查環境":std::string(action)=="Create"?"建立兩組測試配對（UAC）":std::string(action)=="Test"?"配對雙向自測":"移除本程式配對（UAC）";
-        auto* b=gtk_button_new_with_label(title); g_object_set_data(G_OBJECT(b),"action",const_cast<char*>(action));
-        g_signal_connect(b,"clicked",G_CALLBACK(manage),s); gtk_box_append(GTK_BOX(management),b);
+    const std::pair<const char*,const char*> driver_actions[]={{"inspect","檢查環境"},{"install","安裝 com0com 驅動（UAC）"},{"uninstall","解除安裝驅動（UAC）"}};
+    const std::pair<const char*,const char*> pair_actions[]={{"create","建立兩組測試配對（UAC）"},{"test","配對雙向自測"},{"remove","移除本程式配對（UAC）"}};
+    for(const auto& row:{std::span(driver_actions),std::span(pair_actions)}) {
+        auto* management=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,8); gtk_box_append(GTK_BOX(box),management);
+        for(const auto& [action,title]:row) {
+            auto* b=gtk_button_new_with_label(title); g_object_set_data(G_OBJECT(b),"action",const_cast<char*>(action));
+            g_signal_connect(b,"clicked",G_CALLBACK(manage),s); gtk_box_append(GTK_BOX(management),b);
+        }
     }
     s->tx=entry("TX COM：配對的來源端，例如 COM10（必須已存在）"); s->rx=entry("Validator RX COM：配對的接收端，例如 COM13");
     s->file=entry("Replay 檔案完整路徑；留空產生固定 0° Roll");
@@ -203,8 +213,9 @@ void activate(GtkApplication* app,gpointer) {
     button("開始測試",G_CALLBACK(start_test)); button("停止測試",G_CALLBACK(stop_test));
     button("Start TX",G_CALLBACK(start_tx)); button("Stop TX",G_CALLBACK(stop_tx)); button("Start RX / Validator",G_CALLBACK(start_rx)); button("Stop RX",G_CALLBACK(stop_rx));
     s->status=gtk_label_new(""); gtk_label_set_wrap(GTK_LABEL(s->status),TRUE); gtk_box_append(GTK_BOX(box),s->status);
-    gtk_box_append(GTK_BOX(box),gtk_label_new("Virtual COM 驅動／配對尚未自動安裝。埠不存在會回報錯誤，不會使用假的 COM。"));
     s->timer=g_timeout_add(100,refresh,s);
+    try { s->manager.start("inspect",s->state_dir); }
+    catch(const std::exception& e) { gtk_label_set_text(GTK_LABEL(s->environment),e.what()); }
     g_object_set_data_full(G_OBJECT(window),"state",s,[](gpointer p){delete static_cast<State*>(p);});
     auto* scroll=gtk_scrolled_window_new(); gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll),box); gtk_window_set_child(GTK_WINDOW(window),scroll); gtk_window_present(GTK_WINDOW(window));
 }

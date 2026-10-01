@@ -4,6 +4,7 @@
 #include "scheduler/output_scheduler.hpp"
 #include "transport/serial_transport.hpp"
 #include "simulator/validation.hpp"
+#include "platform/virtual_com_worker.hpp"
 #include <array>
 #include <filesystem>
 #include <fstream>
@@ -28,6 +29,7 @@ int launch_simulator_gui();
 #endif
 int main(int argc, char** argv) {
     posmv::setup_console(argc, argv);
+    if (argc > 1 && std::string(argv[1]) == "env") return posmv::run_virtual_com_worker();
 #ifdef POSMV_HAS_GUI
     if (argc == 1) return launch_simulator_gui();
 #endif
