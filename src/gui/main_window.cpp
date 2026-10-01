@@ -1,4 +1,5 @@
 #include <gtk/gtk.h>
+#include "gui/port_selector.hpp"
 #include "app/proxy_engine.hpp"
 #include <sstream>
 #include <iomanip>
@@ -33,10 +34,15 @@ void connect_clicked(GtkButton*, gpointer data) {
     try {
         configure(c); const unsigned rates[] = {25, 50, 100};
         c->engine.stale_timeout(std::chrono::milliseconds(gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(c->timeout))));
-        c->engine.start(gtk_editable_get_text(GTK_EDITABLE(c->input)), gtk_editable_get_text(GTK_EDITABLE(c->output)),
+        c->engine.start(posmv::selected_port(c->input), posmv::selected_port(c->output),
             gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(c->baud)), rates[gtk_drop_down_get_selected(GTK_DROP_DOWN(c->rate))],
             false);
     } catch (const std::exception& e) { gtk_label_set_text(GTK_LABEL(c->status), e.what()); }
+}
+void scan_ports(GtkButton*, gpointer data) {
+    auto* c = static_cast<Controller*>(data);
+    if (c->engine.snapshot().connected) return;
+    posmv::refresh_ports(c->input); posmv::refresh_ports(c->output);
 }
 void disconnect_clicked(GtkButton*, gpointer data) {
     auto* c = static_cast<Controller*>(data); c->engine.stop(); gtk_label_set_text(GTK_LABEL(c->status), "Disconnected");
@@ -80,8 +86,8 @@ void activate(GtkApplication* application, gpointer) {
     auto number = [&](const char* label, double low, double high, double step, double value) {
         auto* spin = gtk_spin_button_new_with_range(low, high, step); gtk_spin_button_set_value(GTK_SPIN_BUTTON(spin), value); return row(label, spin);
     };
-    c->input = row("Input COM", gtk_entry_new()); gtk_entry_set_placeholder_text(GTK_ENTRY(c->input), "選填實際存在的 COM，例如 COM11");
-    c->output = row("Output COM", gtk_entry_new()); gtk_entry_set_placeholder_text(GTK_ENTRY(c->output), "選填實際存在的 COM，例如 COM12");
+    c->input = row("輸入 COM", gtk_drop_down_new(nullptr, nullptr)); posmv::refresh_ports(c->input);
+    c->output = row("輸出 COM", gtk_drop_down_new(nullptr, nullptr)); posmv::refresh_ports(c->output);
     c->baud = number("Baud (8N1)", 1200, 4000000, 1200, 38400);
     c->timeout = number("資料過期 timeout ms", 10, 60000, 10, 500);
     const char* rates[] = {"25 Hz", "50 Hz", "100 Hz", nullptr}; c->rate = row("Output rate", gtk_drop_down_new_from_strings(rates));
@@ -91,6 +97,7 @@ void activate(GtkApplication* application, gpointer) {
     g_signal_connect(c->enable, "toggled", G_CALLBACK(changed), c);
     auto* buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8); gtk_box_append(GTK_BOX(box), buttons);
     auto button = [&](const char* label, GCallback cb) { auto* b = gtk_button_new_with_label(label); gtk_box_append(GTK_BOX(buttons), b); g_signal_connect(b, "clicked", cb, c); };
+    button("重新掃描 COM", G_CALLBACK(scan_ports));
     button("連線 COM", G_CALLBACK(connect_clicked)); button("中斷連線", G_CALLBACK(disconnect_clicked));
     button("套用 Sweep 設定", G_CALLBACK(apply));
     c->status = gtk_label_new("Disconnected"); c->motion = gtk_label_new(""); c->diagnostics = gtk_label_new("");
