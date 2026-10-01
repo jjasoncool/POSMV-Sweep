@@ -88,6 +88,22 @@ gboolean refresh(gpointer p) {
     auto* s=static_cast<State*>(p); std::lock_guard lock(s->mutex);
     gtk_label_set_text(GTK_LABEL(s->status),(s->tx_status+"\n\n"+s->rx_status).c_str()); return G_SOURCE_CONTINUE;
 }
+void start_test(GtkButton*, gpointer p) { start_rx(nullptr,p); start_tx(nullptr,p); }
+void stop_test(GtkButton*, gpointer p) { stop_tx(nullptr,p); stop_rx(nullptr,p); }
+void selected(GtkNativeDialog* dialog, int response, gpointer p) {
+    if (response == GTK_RESPONSE_ACCEPT) {
+        auto* file = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(dialog));
+        auto* path = g_file_get_path(file);
+        if (path) gtk_editable_set_text(GTK_EDITABLE(static_cast<State*>(p)->file), path);
+        g_free(path); g_object_unref(file);
+    }
+    g_object_unref(dialog);
+}
+void choose(GtkButton* button, gpointer p) {
+    auto* dialog = gtk_file_chooser_native_new("選擇 TSS1 capture", GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(button))), GTK_FILE_CHOOSER_ACTION_OPEN, "選擇", "取消");
+    g_signal_connect(dialog, "response", G_CALLBACK(selected), p);
+    gtk_native_dialog_show(GTK_NATIVE_DIALOG(dialog));
+}
 void activate(GtkApplication* app,gpointer) {
     auto* window=gtk_application_window_new(app); gtk_window_set_title(GTK_WINDOW(window),"POSMV Simulator — TX / Validator"); gtk_window_set_default_size(GTK_WINDOW(window),800,600);
     auto* s=new State; auto* box=gtk_box_new(GTK_ORIENTATION_VERTICAL,12);
@@ -101,6 +117,8 @@ void activate(GtkApplication* app,gpointer) {
     s->loop=gtk_check_button_new_with_label("循環播放直到 Stop"); gtk_check_button_set_active(GTK_CHECK_BUTTON(s->loop),TRUE); gtk_box_append(GTK_BOX(box),s->loop);
     auto* buttons=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,10); gtk_box_append(GTK_BOX(box),buttons);
     auto button=[&](const char* text,GCallback callback) { auto* b=gtk_button_new_with_label(text); gtk_box_append(GTK_BOX(buttons),b); g_signal_connect(b,"clicked",callback,s); };
+    button("選擇文字檔",G_CALLBACK(choose));
+    button("開始測試",G_CALLBACK(start_test)); button("停止測試",G_CALLBACK(stop_test));
     button("Start TX",G_CALLBACK(start_tx)); button("Stop TX",G_CALLBACK(stop_tx)); button("Start RX / Validator",G_CALLBACK(start_rx)); button("Stop RX",G_CALLBACK(stop_rx));
     s->status=gtk_label_new(""); gtk_label_set_wrap(GTK_LABEL(s->status),TRUE); gtk_box_append(GTK_BOX(box),s->status);
     gtk_box_append(GTK_BOX(box),gtk_label_new("Virtual COM 驅動／配對尚未自動安裝。埠不存在會回報錯誤，不會使用假的 COM。"));
