@@ -47,8 +47,10 @@ try {
         $installer = Join-Path $extract 'Setup_com0com_v3.0.0.0_W7_x64_signed.exe'
         if ((Get-FileHash $installer -Algorithm SHA256).Hash -ne '26486b28604b49a9008c54feb11b9ece0008a8287ee5caf0bcf2a62f4317128f') { throw 'Installer hash mismatch.' }
         if ((Get-AuthenticodeSignature $installer).Status -ne 'Valid') { throw 'Installer signature is not trusted on this machine.' }
-        # Interactive official installer preserves license and driver security prompts.
-        $process = Start-Process -FilePath $installer -PassThru -Wait
+        # Official NSIS silent mode (case-sensitive /S), not an MSI package.
+        # Keep Windows elevation/signature checks intact. Silent installation does
+        # not create pairs: our separate Create action owns that lifecycle.
+        $process = Start-Process -FilePath $installer -ArgumentList '/S' -PassThru -Wait
         if ($process.ExitCode -ne 0) { throw "Installer exited $($process.ExitCode); inspect installation before creating pairs." }
     }
     if (-not $SetupPath) {
