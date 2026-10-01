@@ -5,6 +5,8 @@
 #include "transport/serial_transport.hpp"
 #include <thread>
 #include <atomic>
+#include <windows.h>
+#include <shellapi.h>
 #include <filesystem>
 #include "simulator/replay_source.hpp"
 #include <mutex>
@@ -13,7 +15,9 @@
 #include <sstream>
 namespace {
 struct State {
-    GtkWidget *tx, *rx, *file, *baud, *rate, *loop, *status, *strict;
+    GtkWidget *tx, *rx, *file, *baud, *rate, *loop, *status, *strict, *environment;
+    HANDLE manager{};
+    std::filesystem::path state_dir;
     std::jthread sender, receiver;
     std::mutex mutex;
     std::string tx_status = "TX 停止", rx_status = "RX 停止";
@@ -25,6 +29,7 @@ struct State {
         if (sender.joinable()) sender.join();
         if (receiver.joinable()) receiver.join();
         if (timer) g_source_remove(timer);
+        if (manager) CloseHandle(manager);
     }
     void message(bool transmit, std::string text) { std::lock_guard lock(mutex); (transmit ? tx_status : rx_status) = std::move(text); }
 };
@@ -88,8 +93,39 @@ void start_rx(GtkButton*, gpointer p) {
         } catch(const std::exception& e) { s->rx_failed=true; s->rx_ready=false; s->message(false,"RX Error: "+std::string(e.what())); }
     });
 }
+void manage(GtkButton* button, gpointer p) {
+    auto* s=static_cast<State*>(p);
+    if(s->manager) return;
+    stop_tx(nullptr,p); stop_rx(nullptr,p); s->pending_start=false;
+    wchar_t exe[32768]; GetModuleFileNameW(nullptr,exe,32768);
+    auto script=std::filesystem::path(exe).parent_path()/"Manage-VirtualCom.ps1";
+    const auto* action=static_cast<const char*>(g_object_get_data(G_OBJECT(button),"action"));
+    std::wstring verb;
+    for(const char* c=action; *c; ++c) verb+=wchar_t(*c);
+    std::wstring args=L"-NoProfile -File \""+script.wstring()+L"\" -Action "+verb+L" -StateDirectory \""+s->state_dir.wstring()+L"\"";
+    SHELLEXECUTEINFOW info{}; info.cbSize=sizeof(info); info.fMask=SEE_MASK_NOCLOSEPROCESS;
+    info.lpVerb=verb==L"Inspect"?L"open":L"runas";
+    info.lpFile=L"powershell.exe"; info.lpParameters=args.c_str(); info.nShow=SW_HIDE;
+    if(!ShellExecuteExW(&info)) { gtk_label_set_text(GTK_LABEL(s->environment),"管理操作未啟動／權限要求被取消"); return; }
+    s->manager=info.hProcess;
+    gtk_label_set_text(GTK_LABEL(s->environment),"正在檢查／管理配對，請完成 Windows 權限提示…");
+}
 gboolean refresh(gpointer p) {
     auto* s=static_cast<State*>(p);
+    if(s->manager && WaitForSingleObject(s->manager,0)==WAIT_OBJECT_0) {
+        DWORD code=1; GetExitCodeProcess(s->manager,&code); CloseHandle(s->manager); s->manager=nullptr;
+        std::ifstream report(s->state_dir/"result.json",std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(report)),{});
+        gtk_label_set_text(GTK_LABEL(s->environment),text.empty()?"管理操作失敗，請確認驅動及 PowerShell 執行政策":text.c_str());
+        if(code==0) {
+            std::ifstream map(s->state_dir/"ports.txt"); std::string tx,input,output,rx;
+            if(map>>tx>>input>>output>>rx) {
+                gtk_editable_set_text(GTK_EDITABLE(s->tx),tx.c_str()); gtk_editable_set_text(GTK_EDITABLE(s->rx),rx.c_str());
+                std::string hint="Sweep Input: "+input+" / Output: "+output+" (pair listed; connectivity not tested)";
+                gtk_label_set_text(GTK_LABEL(s->environment),hint.c_str());
+            }
+        }
+    }
     if(s->pending_start && s->rx_failed) { s->pending_start=false; s->message(true,"RX 開啟失敗，未啟動 TX"); }
     else if(s->pending_start && s->rx_ready) { s->pending_start=false; start_tx(nullptr,p); }
     std::lock_guard lock(s->mutex);
@@ -113,10 +149,18 @@ void choose(GtkButton* button, gpointer p) {
 }
 void activate(GtkApplication* app,gpointer) {
     auto* window=gtk_application_window_new(app); gtk_window_set_title(GTK_WINDOW(window),"POSMV Simulator — TX / Validator"); gtk_window_set_default_size(GTK_WINDOW(window),800,600);
-    auto* s=new State; auto* box=gtk_box_new(GTK_ORIENTATION_VERTICAL,12);
+    auto* s=new State; s->state_dir=std::filesystem::path(g_get_user_data_dir())/"POSMV-Sweep"/"virtual-com"; auto* box=gtk_box_new(GTK_ORIENTATION_VERTICAL,12);
     gtk_widget_set_margin_start(box,20); gtk_widget_set_margin_end(box,20); gtk_widget_set_margin_top(box,20); gtk_widget_set_margin_bottom(box,20);
     auto entry=[&](const char* text) { auto* e=gtk_entry_new(); gtk_entry_set_placeholder_text(GTK_ENTRY(e),text); gtk_box_append(GTK_BOX(box),e); return e; };
     gtk_box_append(GTK_BOX(box),gtk_label_new("獨立串列測試工具：先啟動 RX，再連接正式程式，最後啟動 TX"));
+    s->environment=gtk_label_new("Virtual COM：尚未檢查；建立需要已安裝 com0com。取消 UAC 不會建立配對。");
+    gtk_label_set_wrap(GTK_LABEL(s->environment),TRUE); gtk_box_append(GTK_BOX(box),s->environment);
+    auto* management=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,8); gtk_box_append(GTK_BOX(box),management);
+    for(auto action:{"Inspect","Create","Remove"}) {
+        const char* title=std::string(action)=="Inspect"?"檢查環境":std::string(action)=="Create"?"建立兩組測試配對（UAC）":"移除本程式配對（UAC）";
+        auto* b=gtk_button_new_with_label(title); g_object_set_data(G_OBJECT(b),"action",const_cast<char*>(action));
+        g_signal_connect(b,"clicked",G_CALLBACK(manage),s); gtk_box_append(GTK_BOX(management),b);
+    }
     s->tx=entry("TX COM：配對的來源端，例如 COM10（必須已存在）"); s->rx=entry("Validator RX COM：配對的接收端，例如 COM13");
     s->file=entry("Replay 檔案完整路徑；留空產生固定 0° Roll");
     s->baud=gtk_spin_button_new_with_range(1200,4000000,1200); gtk_spin_button_set_value(GTK_SPIN_BUTTON(s->baud),38400); gtk_box_append(GTK_BOX(box),s->baud);

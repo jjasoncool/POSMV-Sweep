@@ -1,0 +1,101 @@
+param(
+    [ValidateSet('Inspect','Create','Remove')][string]$Action = 'Inspect',
+    [string]$SetupPath,
+    [Parameter(Mandatory=$true)][string]$StateDirectory
+)
+$ErrorActionPreference = 'Stop'
+New-Item -ItemType Directory -Force -Path $StateDirectory | Out-Null
+$resultPath = Join-Path $StateDirectory 'result.json'
+$ownershipPath = Join-Path $StateDirectory 'owned.json'
+$lock = $null
+function Invoke-Setup([string[]]$Arguments) {
+    $output = & $SetupPath @Arguments 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { throw "setupc exit $LASTEXITCODE : $output" }
+    return $output
+}
+function Read-Pairs {
+    $text = Invoke-Setup @('list')
+    $pairs = @{}
+    foreach ($line in ($text -split "`n")) {
+        if ($line -match 'CNC([AB])(\d+)\s+(.*)') {
+            $side = $Matches[1]; $id = $Matches[2]; $details = $Matches[3]
+            $port = ''
+            if ($details -match 'RealPortName=(COM\d+)') { $port = $Matches[1] }
+            elseif ($details -match 'PortName=(COM\d+)') { $port = $Matches[1] }
+            if (-not $pairs.ContainsKey($id)) { $pairs[$id] = @{ Id=$id; A=''; B='' } }
+            $pairs[$id][$side] = $port
+        }
+    }
+    return $pairs
+}
+function Save-Owned($owned) {
+    $temp = "$ownershipPath.tmp"
+    ConvertTo-Json -Depth 5 -InputObject @($owned) | Set-Content -Encoding UTF8 $temp
+    Move-Item -Force $temp $ownershipPath
+}
+try {
+    $lock = [IO.File]::Open((Join-Path $StateDirectory 'operation.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
+    if (-not $SetupPath) {
+        foreach ($candidate in @("$env:ProgramFiles\com0com\setupc.exe", "${env:ProgramFiles(x86)}\com0com\setupc.exe")) {
+            if (Test-Path -LiteralPath $candidate) { $SetupPath = $candidate; break }
+        }
+    }
+    if (-not $SetupPath -or -not (Test-Path -LiteralPath $SetupPath)) {
+        throw 'com0com setupc.exe not found. Install a compatible driver first; Windows security settings will not be changed.'
+    }
+    $pairs = Read-Pairs
+    $owned = @()
+    if (Test-Path $ownershipPath) { $owned = @(Get-Content -Raw $ownershipPath | ConvertFrom-Json) }
+    # Never adopt unrelated existing pairs, and never remove a changed pair.
+    foreach ($pair in $owned) {
+        if ($pairs.ContainsKey([string]$pair.Id)) {
+            $actual = $pairs[[string]$pair.Id]
+            if ($actual.A -ne $pair.A -or $actual.B -ne $pair.B) {
+                throw "Ownership conflict for pair $($pair.Id); refusing changes."
+            }
+        }
+    }
+    if ($Action -eq 'Remove') {
+        foreach ($pair in @($owned)) {
+            if ($pairs.ContainsKey([string]$pair.Id)) {
+                Invoke-Setup @('remove', [string]$pair.Id) | Out-Null
+                $pairs = Read-Pairs
+                if ($pairs.ContainsKey([string]$pair.Id)) { throw "Pair $($pair.Id) was not removed" }
+            }
+            $owned = @($owned | Where-Object { $_.Id -ne $pair.Id })
+            Save-Owned $owned
+        }
+    } elseif ($Action -eq 'Create') {
+        $owned = @($owned | Where-Object { $pairs.ContainsKey([string]$_.Id) })
+        Save-Owned $owned
+        while ($owned.Count -lt 2) {
+            $id = 0
+            while ($pairs.ContainsKey([string]$id)) { $id++ }
+            # COM# delegates allocation to Windows rather than guessing free numbers.
+            Invoke-Setup @('install', [string]$id, 'PortName=COM#', 'PortName=COM#') | Out-Null
+            $pairs = Read-Pairs
+            $created = $pairs[[string]$id]
+            if (-not $created -or -not $created.A -or -not $created.B) {
+                throw "Pair $id did not expose two COM names. Inspect com0com before retrying."
+            }
+            $owned += [pscustomobject]$created
+            Save-Owned $owned
+        }
+    }
+    $ports = @([IO.Ports.SerialPort]::GetPortNames())
+    $ready = $owned.Count -eq 2
+    foreach ($pair in $owned) {
+        if (-not $pairs.ContainsKey([string]$pair.Id) -or $ports -notcontains $pair.A -or $ports -notcontains $pair.B) { $ready=$false }
+    }
+    $result = @{ Ok=$true; Ready=$ready; Setup=$SetupPath; Pairs=@($owned); Message='Driver commands completed; run connectivity self-test before use.' }
+    ConvertTo-Json -Depth 6 $result | Set-Content -Encoding UTF8 $resultPath
+    # Simple machine-readable mapping alongside the human-readable JSON.
+    $mapping = Join-Path $StateDirectory 'ports.txt'
+    if ($ready) { @($owned[0].A, $owned[0].B, $owned[1].A, $owned[1].B) | Set-Content -Encoding ASCII $mapping }
+    elseif (Test-Path $mapping) { Remove-Item $mapping }
+} catch {
+    @{ Ok=$false; Ready=$false; Message=$_.Exception.Message } | ConvertTo-Json | Set-Content -Encoding UTF8 $resultPath
+    exit 1
+} finally {
+    if ($lock) { $lock.Dispose() }
+}
