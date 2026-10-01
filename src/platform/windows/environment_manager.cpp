@@ -13,7 +13,7 @@ EnvironmentManager::~EnvironmentManager() = default;
 bool EnvironmentManager::active() const { return impl_->process != nullptr; }
 void EnvironmentManager::start(const std::string& action, const std::filesystem::path& directory) {
     if (active()) throw std::runtime_error("Environment operation already running");
-    if (action != "Inspect" && action != "Create" && action != "Remove" && action != "Test")
+    if (action != "Inspect" && action != "Install" && action != "Create" && action != "Remove" && action != "Test")
         throw std::invalid_argument("Unknown environment action");
     wchar_t exe[32768];
     const auto length = GetModuleFileNameW(nullptr, exe, 32768);

@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('Inspect','Create','Remove','Test')][string]$Action = 'Inspect',
+    [ValidateSet('Inspect','Install','Create','Remove','Test')][string]$Action = 'Inspect',
     [string]$SetupPath,
     [Parameter(Mandatory=$true)][string]$StateDirectory
 )
@@ -35,6 +35,21 @@ function Save-Owned($owned) {
 }
 try {
     $lock = [IO.File]::Open((Join-Path $StateDirectory 'operation.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
+    if ($Action -eq 'Install') {
+        # Pinned official distribution. Never disable signature enforcement.
+        $archive = Join-Path $StateDirectory 'com0com-3.0.0.0.zip'
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -UseBasicParsing -Uri 'https://downloads.sourceforge.net/project/com0com/com0com/3.0.0.0/com0com-3.0.0.0-i386-and-x64-signed.zip' -OutFile $archive
+        if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne '6e5d4359865277430d4ae88c73fb7e648a0ed8e81aea5002478179cfcb0bb0e1') { throw 'Driver archive hash mismatch; refusing execution.' }
+        $extract = Join-Path $StateDirectory 'driver-installer'
+        Expand-Archive -Force -LiteralPath $archive -DestinationPath $extract
+        $installer = Join-Path $extract 'Setup_com0com_v3.0.0.0_W7_x64_signed.exe'
+        if ((Get-FileHash $installer -Algorithm SHA256).Hash -ne '26486b28604b49a9008c54feb11b9ece0008a8287ee5caf0bcf2a62f4317128f') { throw 'Installer hash mismatch.' }
+        if ((Get-AuthenticodeSignature $installer).Status -ne 'Valid') { throw 'Installer signature is not trusted on this machine.' }
+        # Interactive official installer preserves license and driver security prompts.
+        $process = Start-Process -FilePath $installer -PassThru -Wait
+        if ($process.ExitCode -ne 0) { throw "Installer exited $($process.ExitCode); inspect installation before creating pairs." }
+    }
     if (-not $SetupPath) {
         foreach ($candidate in @("$env:ProgramFiles\com0com\setupc.exe", "${env:ProgramFiles(x86)}\com0com\setupc.exe")) {
             if (Test-Path -LiteralPath $candidate) { $SetupPath = $candidate; break }

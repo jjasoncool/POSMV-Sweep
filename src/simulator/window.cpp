@@ -178,8 +178,8 @@ void activate(GtkApplication* app,gpointer) {
     s->environment=gtk_label_new("Virtual COM：尚未檢查；建立需要已安裝 com0com。取消 UAC 不會建立配對。");
     gtk_label_set_wrap(GTK_LABEL(s->environment),TRUE); gtk_box_append(GTK_BOX(box),s->environment);
     auto* management=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,8); gtk_box_append(GTK_BOX(box),management);
-    for(auto action:{"Inspect","Create","Remove","Test"}) {
-        const char* title=std::string(action)=="Inspect"?"檢查環境":std::string(action)=="Create"?"建立兩組測試配對（UAC）":std::string(action)=="Test"?"配對雙向自測":"移除本程式配對（UAC）";
+    for(auto action:{"Inspect","Install","Create","Remove","Test"}) {
+        const char* title=std::string(action)=="Install"?"下載並安裝 com0com（需網路／UAC）":std::string(action)=="Inspect"?"檢查環境":std::string(action)=="Create"?"建立兩組測試配對（UAC）":std::string(action)=="Test"?"配對雙向自測":"移除本程式配對（UAC）";
         auto* b=gtk_button_new_with_label(title); g_object_set_data(G_OBJECT(b),"action",const_cast<char*>(action));
         g_signal_connect(b,"clicked",G_CALLBACK(manage),s); gtk_box_append(GTK_BOX(management),b);
     }
