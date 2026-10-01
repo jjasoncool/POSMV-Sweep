@@ -37,9 +37,9 @@ is paced with steady_clock absolute deadlines; missed slots are skipped, not bur
 
 ## Level 2: paired virtual COM ports
 
-Prerequisite: an operator-installed virtual serial driver and known connected
-pair, for example COM10 <-> COM11. This project does not install kernel drivers,
-create virtual ports, or assume any particular third-party driver is trusted.
+Prerequisite: a connected pair, for example COM10 <-> COM11. On explicit operator
+request (UAC), the Simulator's Virtual COM controls install the pinned com0com
+2.2.2.0 driver and create two owned pairs; see virtual-com-status.md.
 Close other software holding these ports. Start receiver first in one terminal:
 
 ```sh
@@ -62,8 +62,9 @@ are test defaults, NOT confirmed instrument settings. Baud must meet theoretical
 Capture is receive-driven serial-to-file processing, not an independent-rate
 serial-to-serial proxy. Capture phase uses actual monotonic elapsed time. Serial
 write errors and zero-byte write timeouts fail the CLI; reads have a finite wait.
-No virtual pair has yet been exercised in this environment. Full proxy GUI,
-serial output from the main application, and full timing metrics remain pending.
+This level passed on 2026-10-01 with com0com 2.2.2.0 pairs; see
+verification/2026-10-01-com0com-2.2.2.0.md. The full serial-to-serial proxy chain
+and full timing metrics are not yet verified end to end.
 
 ## Level 3
 
