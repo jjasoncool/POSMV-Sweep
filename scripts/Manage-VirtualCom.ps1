@@ -9,7 +9,11 @@ $resultPath = Join-Path $StateDirectory 'result.json'
 $ownershipPath = Join-Path $StateDirectory 'owned.json'
 $lock = $null
 function Invoke-Setup([string[]]$Arguments) {
-    $output = & $SetupPath @Arguments 2>&1 | Out-String
+    # setupc opens com0com.inf from the working directory; elevated processes
+    # start in System32, so always run it from its own installation directory.
+    Push-Location -LiteralPath (Split-Path -Parent $SetupPath)
+    try { $output = & $SetupPath @Arguments 2>&1 | Out-String }
+    finally { Pop-Location }
     if ($LASTEXITCODE -ne 0) { throw "setupc exit $LASTEXITCODE : $output" }
     return $output
 }
@@ -61,6 +65,7 @@ try {
     if (-not $SetupPath -or -not (Test-Path -LiteralPath $SetupPath)) {
         throw 'com0com setupc.exe not found. Install a compatible driver first; Windows security settings will not be changed.'
     }
+    $SetupPath = (Resolve-Path -LiteralPath $SetupPath).Path
     $pairs = Read-Pairs
     $owned = @()
     if (Test-Path $ownershipPath) { $owned = @(Get-Content -Raw $ownershipPath | ConvertFrom-Json) }
