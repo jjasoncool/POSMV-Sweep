@@ -17,12 +17,13 @@ struct Controller {
     GtkWidget *limit, *rate_limit, *notice, *apply, *motion, *diagnostics;
     posmv::SweepConfig applied;  // what the last Apply or Connect handed to the engine
     std::string connect_error;
+    bool sweep_running{};        // the engine's Sweep state the switch last showed
     bool syncing{};
     guint timer{};
 };
 posmv::SweepConfig settings(Controller* c) {
     posmv::SweepConfig config;
-    config.enabled = gtk_check_button_get_active(GTK_CHECK_BUTTON(c->enable));
+    config.enabled = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(c->enable));
     config.amplitude_deg = gtk_spin_button_get_value(GTK_SPIN_BUTTON(c->angle));
     config.cycle_seconds = gtk_spin_button_get_value(GTK_SPIN_BUTTON(c->cycle));
     config.direction = gtk_check_button_get_active(GTK_CHECK_BUTTON(c->invert)) ? posmv::SweepDirectionConvention::PositiveFirst : posmv::SweepDirectionConvention::NegativeFirst;
@@ -50,11 +51,32 @@ void limit_changed(GtkWidget*, gpointer data) {
     auto* c = static_cast<Controller*>(data);
     c->engine.stabilisation_limit(gtk_spin_button_get_value(GTK_SPIN_BUTTON(c->limit)));
 }
-void changed(GtkWidget*, gpointer data) {
+// The blue toggle shows the current state: pressed and ON, OFF, or finishing at CENTER.
+void label_sweep(Controller* c, bool finishing) {
+    const char* label = finishing ? "Sweep：收尾中" : gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(c->enable)) ? "Sweep：ON" : "Sweep：OFF";
+    if (std::string(gtk_button_get_label(GTK_BUTTON(c->enable))) != label) gtk_button_set_label(GTK_BUTTON(c->enable), label);
+}
+void show_sweep(Controller* c, bool on) {
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(c->enable), on);
+    label_sweep(c, c->engine.snapshot().sweep_finishing);
+}
+// The Sweep toggle: OFF forwards the input unchanged; ON takes the settings on screen and starts
+// at CENTER. Turning it back ON during a soft stop just keeps the sine running.
+void sweep_toggled(GtkToggleButton* button, gpointer data) {
     auto* c = static_cast<Controller*>(data);
     if (c->syncing) return;
-    try { c->engine.enable(gtk_check_button_get_active(GTK_CHECK_BUTTON(c->enable))); gtk_label_set_text(GTK_LABEL(c->notice), ""); }
-    catch (const std::exception& e) { gtk_label_set_text(GTK_LABEL(c->notice), e.what()); }
+    const bool on = gtk_toggle_button_get_active(button);
+    c->syncing = true;
+    try {
+        if (on && !c->engine.snapshot().sweep_finishing) configure(c);
+        else c->engine.enable(on);
+        gtk_label_set_text(GTK_LABEL(c->notice), "");
+        show_sweep(c, on);
+    } catch (const std::exception& e) {
+        gtk_label_set_text(GTK_LABEL(c->notice), e.what());
+        show_sweep(c, !on);  // the change did not happen
+    }
+    c->syncing = false;
 }
 // Each mode shows only its own fields: Angle and Cycle for a sine, one angle for a fixed Offset.
 void mode_changed(GObject*, GParamSpec*, gpointer data) {
@@ -69,11 +91,12 @@ void apply(GtkButton*, gpointer data) {
         c->engine.configure(config);
         c->applied = config;
         const auto s = c->engine.snapshot();
+        // Apply saves; it changes the output only while Sweep is ON.
         const bool fixed = config.mode == posmv::SweepMode::Fixed;
-        const char* text = !s.connected ? "設定已更新，連線後生效"
-            : !config.enabled ? (fixed ? "已更新固定 Offset，開啟 Sweep 時生效" : "設定已更新，開啟 Sweep 時從 CENTER 開始")
+        const char* text = !config.enabled ? (fixed ? "已儲存固定 Offset，開啟 Sweep 時使用" : "已儲存，開啟 Sweep 時從 CENTER 開始")
+            : !s.connected ? "已儲存，連線後生效"
             : s.apply_pending ? (fixed ? "固定 Offset 將在下一個 CENTER 生效" : "新設定將在下一個 CENTER 生效，並從 CENTER 開始")
-            : fixed ? "已套用固定 Offset；offset 可能跳變" : "設定已套用，Sweep 從 CENTER 重啟；offset 可能跳變";
+            : fixed ? "已套用固定 Offset；offset 可能跳變" : "已套用，Sweep 從 CENTER 重啟；offset 可能跳變";
         gtk_label_set_text(GTK_LABEL(c->notice), text);
     } catch (const std::exception& e) { gtk_label_set_text(GTK_LABEL(c->notice), e.what()); }
 }
@@ -123,11 +146,16 @@ gboolean refresh(gpointer data) {
     // Foolproof: the same port for input and output, or no port at all, cannot be connected.
     const auto conflict = s.connected ? std::string() : posmv::port_conflict(c->input, c->output);
     gtk_widget_set_sensitive(c->connect, conflict.empty());
-    if (s.connected) {
+    // The engine can turn Sweep off itself (stale input, a finished soft stop); follow only such
+    // changes, so the operator's own clicks are never overwritten mid-way.
+    const bool running = s.sweep_enabled && !s.sweep_finishing;
+    if (s.connected && running != c->sweep_running) {
         c->syncing = true;
-        gtk_check_button_set_active(GTK_CHECK_BUTTON(c->enable), s.sweep_enabled && !s.sweep_finishing);
+        show_sweep(c, running);
         c->syncing = false;
     }
+    c->sweep_running = running;
+    label_sweep(c, s.connected && s.sweep_finishing);
     auto* state = !conflict.empty() ? g_markup_printf_escaped("<span foreground=\"#c25e00\">● %s</span>", conflict.c_str())
         : !s.connected && !c->connect_error.empty()
             ? g_markup_printf_escaped("<span foreground=\"#d0342c\">● 無法連線：%s</span>", c->connect_error.c_str())
@@ -221,8 +249,10 @@ void activate(GtkApplication* application, gpointer) {
     add(row({text("鮑率（8N1）"), c->baud, text("過期門檻"), c->timeout, text("ms"), c->connect, c->state}));
     add(gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
     // Sweep
-    c->enable = gtk_check_button_new_with_label("Sweep 開啟");
-    gtk_widget_set_tooltip_text(c->enable, "關閉時照常轉送原始資料，不加 Offset");
+    c->enable = gtk_toggle_button_new_with_label("Sweep：OFF");  // pressed while ON
+    gtk_widget_add_css_class(c->enable, "suggested-action");
+    gtk_widget_set_size_request(c->enable, 140, -1);  // one width for every state
+    gtk_widget_set_tooltip_text(c->enable, "OFF：Output 等於 Input，原樣轉送。ON：採用畫面上的設定，從 CENTER 開始加上 Offset");
     const char* modes[] = {"正弦 Sweep", "固定 Offset（驗證用）", nullptr};
     c->mode = gtk_drop_down_new_from_strings(modes);
     gtk_widget_set_size_request(c->mode, 190, -1);  // wide enough for either mode, so the fields never move
@@ -233,7 +263,7 @@ void activate(GtkApplication* application, gpointer) {
     c->mode_fields = gtk_stack_new();
     gtk_stack_add_named(GTK_STACK(c->mode_fields), row({text("幅度 Angle ±"), c->angle, text("°　週期 Cycle"), c->cycle, text("秒")}), "sine");
     gtk_stack_add_named(GTK_STACK(c->mode_fields), row({text("Offset"), c->fixed_offset, text("°")}), "fixed");
-    add(row({c->enable, text("模式"), c->mode, c->mode_fields}));
+    add(row({text("模式"), c->mode, c->mode_fields}));
     c->invert = gtk_check_button_new_with_label("反轉（先正後負）");
     c->finish = gtk_check_button_new_with_label("關閉與套用時收尾到 CENTER（不立即跳回 0）");
     gtk_widget_set_tooltip_text(c->finish, "關閉 Sweep 或套用新設定時，Offset 沿正弦走到下一個 CENTER 才停止或切換");
@@ -248,14 +278,15 @@ void activate(GtkApplication* application, gpointer) {
     gtk_widget_set_tooltip_text(c->rate_limit, "Offset 變化速度的警告門檻；部分 MBES 會標記 Roll 變化太快的 ping。"
         "下游是 RESON 時請改成 10°/s");
     c->rate_info = gtk_label_new("");
-    // Apply closes the Sweep block at its bottom right.
+    // Apply (save) and the Sweep switch close the block at its bottom right.
     c->apply = button("套用", G_CALLBACK(apply));
-    gtk_widget_set_tooltip_text(c->apply, "套用模式、幅度、週期、固定 Offset 與反轉；有未套用的變更時按鈕是藍色。"
-        "Sweep 開啟、收尾到 CENTER 與兩個上限一改就生效，不需要套用");
+    gtk_widget_set_tooltip_text(c->apply, "儲存模式、幅度、週期、固定 Offset 與反轉；有未儲存的變更時按鈕是藍色。"
+        "Sweep 開啟中按下會生效（勾選收尾時等到下一個 CENTER）。收尾與兩個上限一改就生效");
     auto* spacer = gtk_label_new(""); gtk_widget_set_hexpand(spacer, TRUE);
-    add(row({text("MBES 穩定上限 ±"), c->limit, text("°　擺動速度上限"), c->rate_limit, text("°/s"), c->rate_info, spacer, c->apply}));
+    add(row({text("MBES 穩定上限 ±"), c->limit, text("°　擺動速度上限"), c->rate_limit, text("°/s"), c->rate_info, spacer,
+        c->apply, c->enable}));
     c->engine.stabilisation_limit(gtk_spin_button_get_value(GTK_SPIN_BUTTON(c->limit)));
-    g_signal_connect(c->enable, "toggled", G_CALLBACK(changed), c);
+    g_signal_connect(c->enable, "toggled", G_CALLBACK(sweep_toggled), c);
     g_signal_connect(c->mode, "notify::selected", G_CALLBACK(mode_changed), c);
     g_signal_connect(c->finish, "toggled", G_CALLBACK(finish_toggled), c);
     g_signal_connect(c->limit, "value-changed", G_CALLBACK(limit_changed), c);
