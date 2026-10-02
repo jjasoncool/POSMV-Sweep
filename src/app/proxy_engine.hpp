@@ -43,6 +43,10 @@ public:
     void configure(SweepConfig config) {
         config.validate(); std::lock_guard lock(mutex_);
         if (config.enabled && state_.stale) throw std::runtime_error("資料過期中，無法開啟 Sweep");
+        if (state_.sweep_finishing && !config.enabled) {  // saved for after the soft stop, which goes on
+            pending_ = config; apply_at_.reset(); state_.apply_pending = false;
+            return;
+        }
         if (finish_at_center_ && config.enabled && config_.enabled && config_.mode == SweepMode::Sine && !state_.sweep_finishing) {
             pending_ = config;
             apply_at_ = next_center(config_, std::chrono::duration<double>(Clock::now() - sweep_start_).count());
@@ -61,6 +65,9 @@ public:
         if (!enabled && finish_at_center_ && config_.enabled && config_.mode == SweepMode::Sine) {
             stop_at_ = next_center(config_, std::chrono::duration<double>(Clock::now() - sweep_start_).count());
             state_.sweep_finishing = true;
+            if (apply_at_) {  // a waiting Apply becomes settings saved for after the stop
+                pending_->enabled = false; apply_at_.reset(); state_.apply_pending = false;
+            }
             return;
         }
         if (enabled && !config_.enabled) sweep_start_ = Clock::now();
@@ -143,8 +150,11 @@ private:
         latest_ = frame; freshness_.received(arrived); ++state_.input_count;
         input_timing_.observe(seconds(arrived));
         state_.stale = false;
-        double elapsed = std::chrono::duration<double>(arrived - sweep_start_).count();
+        // A frame read just before Sweep (re)started counts as CENTER: an ON or Apply can land
+        // between the read and this lock, and a negative time would stop forwarding.
+        double elapsed = std::max(0.0, std::chrono::duration<double>(arrived - sweep_start_).count());
         if (stop_at_ && elapsed >= *stop_at_) {  // reached CENTER while finishing
+            if (pending_ && !apply_at_) { config_ = *pending_; pending_.reset(); }  // settings saved meanwhile
             config_.enabled = false; state_.sweep_enabled = false; state_.sweep_finishing = false; stop_at_.reset();
         }
         if (apply_at_ && elapsed >= *apply_at_) {  // reached CENTER: new settings start from CENTER

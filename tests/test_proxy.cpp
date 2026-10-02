@@ -151,5 +151,85 @@ int main() {
         check(pending.apply_pending && !applied.apply_pending && applied.sweep_enabled && largest <= 2.0 + 1e-9,
             "Apply waits for the next CENTER when finishing at CENTER is chosen");
     }
+    {
+        Link link;
+        posmv::ProxyEngine engine;
+        posmv::SweepConfig slow;  // ±10°, CENTER every 0.5 s
+        slow.cycle_seconds = 1.0;
+        engine.configure(slow);
+        engine.finish_at_center(true);
+        engine.start(link.input, link.output);
+        std::jthread feeder([&](std::stop_token token) {
+            while (!token.stop_requested()) { link.input->write(frame); std::this_thread::sleep_for(10ms); }
+        });
+        // Near a peak, so the next CENTER is about a quarter Cycle away whatever the scheduling.
+        for (int i = 0; i < 200 && std::abs(engine.snapshot().offset) < 9; ++i) std::this_thread::sleep_for(5ms);
+        engine.enable(false);  // finishing: the sine runs on to the next CENTER
+        auto saved = slow;     // Apply with Sweep OFF only saves
+        saved.enabled = false;
+        saved.amplitude_deg = 2;
+        engine.configure(saved);
+        std::this_thread::sleep_for(30ms);
+        const auto finishing = engine.snapshot();
+        std::this_thread::sleep_for(600ms);  // past the next CENTER
+        engine.enable(true);
+        std::this_thread::sleep_for(50ms);
+        double largest = 0;
+        for (int i = 0; i < 20; ++i) {
+            largest = std::max(largest, std::abs(engine.snapshot().offset));
+            std::this_thread::sleep_for(10ms);
+        }
+        feeder.request_stop();
+        check(finishing.sweep_finishing && std::abs(finishing.offset) > 1 && largest > 0.5 && largest <= 2.0 + 1e-9,
+            "saving settings while finishing keeps the soft stop; the saved settings run next time");
+    }
+    {
+        Link link;
+        posmv::ProxyEngine engine;
+        posmv::SweepConfig fast;  // ±10°, CENTER every 0.2 s
+        fast.cycle_seconds = 0.4;
+        engine.configure(fast);
+        engine.finish_at_center(true);
+        engine.start(link.input, link.output);
+        std::jthread feeder([&](std::stop_token token) {
+            while (!token.stop_requested()) { link.input->write(frame); std::this_thread::sleep_for(10ms); }
+        });
+        std::this_thread::sleep_for(250ms);
+        auto small = fast;
+        small.amplitude_deg = 2;
+        engine.configure(small);  // waits for the next CENTER
+        engine.enable(false);     // then Sweep OFF, also at the next CENTER
+        std::this_thread::sleep_for(300ms);
+        const auto stopped = engine.snapshot();
+        engine.enable(true);
+        std::this_thread::sleep_for(50ms);
+        double largest = 0;
+        for (int i = 0; i < 20; ++i) {
+            largest = std::max(largest, std::abs(engine.snapshot().offset));
+            std::this_thread::sleep_for(10ms);
+        }
+        feeder.request_stop();
+        check(!stopped.sweep_enabled && stopped.offset == 0 && largest > 0.5 && largest <= 2.0 + 1e-9,
+            "Sweep OFF after a waiting Apply stops at CENTER and keeps the new settings for next time");
+    }
+    {
+        Link link;
+        posmv::ProxyEngine engine;
+        engine.start(link.input, link.output);
+        std::jthread feeder([&](std::stop_token token) {
+            while (!token.stop_requested()) { link.input->write(frame); std::this_thread::sleep_for(1ms); }
+        });
+        // ON lands between a frame's arrival and its processing sooner or later.
+        for (int i = 0; i < 400; ++i) {
+            engine.enable(i % 2 == 0);
+            std::this_thread::sleep_for(std::chrono::microseconds(500 + (i * 37) % 700));
+        }
+        const auto before = engine.snapshot().output_count;
+        std::this_thread::sleep_for(100ms);
+        const auto after = engine.snapshot();
+        feeder.request_stop();
+        check(after.state != posmv::ProxyState::Error && after.output_count > before,
+            "turning Sweep on and off while frames arrive never stops forwarding");
+    }
     return failures ? 1 : 0;
 }
