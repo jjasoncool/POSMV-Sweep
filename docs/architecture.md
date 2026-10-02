@@ -27,7 +27,8 @@ GTK must never perform protocol work or precise scheduling. The current shell
 does not claim to be the first usable full operator version.
 
 Open commissioning questions: physical interface; baud/parity/data/stop bits;
-MBES model and TSS1 acceptance; Roll sign and actual beam steering response;
+MBES model and TSS1 acceptance; Roll sign (POS MV can invert it, see
+protocol.md) and actual beam steering response;
 latency tolerance. (Live output now follows the source rate; see adr/0001.)
 No automatic water-depth control or sonar ping synchronization is implemented.
 

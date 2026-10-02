@@ -11,7 +11,9 @@ bool digits(std::string_view s) {
     for (char c : s) if (c < '0' || c > '9') return false;
     return true;
 }
-// The horizontal (XX) and vertical (AAAA) accelerations are hexadecimal, e.g. ":01001D".
+// XX and AAAA (horizontal and vertical acceleration) are hexadecimal, e.g. ":01001D": POS MV
+// Table 26 gives 3.83 and 0.0625 cm/s² per count up to 9.81 and 40.96 m/s², reached only by FF
+// and FFFF. See docs/protocol.md.
 bool hex_digits(std::string_view s) {
     for (char c : s) if ((c < '0' || c > '9') && (c < 'A' || c > 'F')) return false;
     return true;

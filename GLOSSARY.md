@@ -25,7 +25,7 @@ Simulator 中檢查接收資料並產生 Verdict 的部分；不是獨立的程�
 ### 資料
 
 **TSS1**:
-POS MV 輸出的 ASCII 姿態資料格式，含 Heave、Roll、Pitch 與狀態旗標。
+POS MV 輸出的 ASCII 姿態資料格式，依序含水平與垂直加速度、Heave、狀態旗標、Roll、Pitch；定義見 POS MV 手冊 Table 26。
 
 **Frame**:
 一筆 TSS1 資料：25 bytes 本體加上 CRLF。
