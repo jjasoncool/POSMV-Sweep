@@ -21,11 +21,21 @@ with GTK assets and third-party license notices. A missing session D-Bus warning
 may still appear in stderr; the tested GUI stays running without that service.
 
 Connect opens the selected input and output ports and starts one forwarding
-worker. The Sweep switch toggles modulation only; turning it off does not stop
-communication. Angle, cycle, direction and mode require Apply and restart at
-CENTER (offset may jump unless finish-at-CENTER is selected). Enabling Sweep
-also restarts at CENTER. Connection settings apply on the next Connect
-(disconnect before changing them).
+worker; connection errors show beside it, in the state label.
+
+The Sweep switch toggles modulation only; turning it off does not stop
+communication. Enabling Sweep restarts at CENTER.
+
+Mode, angle, cycle, fixed Offset and direction require Apply:
+- Apply sits at the bottom right of the Sweep block.
+- It turns blue while settings on screen are not in effect.
+- Its feedback appears right above it.
+- With Sweep ON, Apply restarts at CENTER at once (the offset may jump), or at
+  the next CENTER when finish-at-CENTER is selected. With Sweep OFF, the new
+  settings start when Sweep is enabled.
+- The Sweep switch, finish-at-CENTER and both limits take effect without Apply.
+
+Connection settings apply on the next Connect (disconnect before changing them).
 
 For Virtual COM testing pick the input and output ports the Simulator shows
 from the dropdowns (重新掃描 COM refreshes them). Input and output must differ:
@@ -48,6 +58,11 @@ Left of the trend chart, a beam sketch shows the ship from the stern. Its parts:
 - In the water, the Output line points at the Offset angle; positive is to the
   right. The port/starboard side still needs commissioning.
 - Lines are grey while nothing is sent.
+
+There is no separate message area, so warnings never shift the layout:
+- The Output value turns orange while it exceeds the MBES limit, and the
+  diagnostics count those frames.
+- The peak sweep rate turns orange above its limit.
 
 Each valid input frame is forwarded as soon as it arrives (adr/0001): unchanged
 with Sweep OFF, with only the Roll field rewritten when ON. Invalid input is
