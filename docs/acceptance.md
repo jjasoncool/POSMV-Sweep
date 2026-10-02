@@ -43,8 +43,10 @@ Four endpoints, two pairs. The applications do not open the same endpoint.
 - [ ] Protocol, timing and behavior verdicts displayed independently.
 - [ ] Detailed errors, receive interval min/mean/max and current rate.
 - [ ] Last-ten-second trends, bounded raw-frame view and event log.
-- [ ] Optional sequence tag in Heave for generated sources (off for OFF
-  comparison): show delay, missing frames and the measured Offset.
+- [ ] Match each returned frame with the frame sent, by every byte except Roll,
+  for generated and capture sources: show matched, byte-identical, missing and
+  unmatched counts, delay and the measured Offset. Optional Heave sequence tag
+  for generated sources (off for OFF comparison).
 - [ ] Deterministic malformed/split/garbage/drop injection; off by default.
 - [ ] Later stage: seeded random delay and disconnect/reconnect injection.
 
@@ -62,7 +64,10 @@ protocol validity as proof of correct sweep behavior.
 
 ## 3. Production GUI
 
-- [ ] Existing-port dropdowns and refresh, rather than manual-only entry.
+- [ ] Existing-port dropdowns and refresh, rather than manual-only entry; input
+  and output can never be the same port.
+- [ ] Accept every TSS1 frame POS MV sends, including hexadecimal accelerations
+  (CTest `capture` uses the supplied capture).
 - [ ] Single-page Traditional Chinese controls retaining instrument terminology.
 - [ ] Distinct disconnected/waiting/active/stale/error states.
 - [ ] Single Sweep switch; OFF continues fresh motion output.

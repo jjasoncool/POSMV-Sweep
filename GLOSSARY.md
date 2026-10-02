@@ -150,14 +150,21 @@ Sweep OFF 時，以已知的固定 Frame 逐 byte 比對 Proxy 輸出的測試�
 **Fault Injection**（故障注入）:
 Simulator 依設定刻意送出的異常資料：Malformed、Split、Garbage、Drop。
 
+**Frame Matching**（比對）:
+RX 依 Roll 以外的內容，把收到的 Frame 對回 TX 送出的那一筆。Proxy 逐筆轉送，所以 Capture 與 Simulator 產生的資料都能比對。
+_Avoid_: 配對（指 Virtual Pair）
+
 **Tag**（序號）:
-Simulator 寫在測試 Frame 的 Heave 欄位裡的流水號，用來把 RX 收到的 Frame 對回 TX 送出的那一筆。只用於 Simulator 產生的資料；Capture 不加。
+Simulator 寫在自己產生的測試 Frame 的 Heave 欄位裡的流水號，讓每筆 Frame 內容都不同，比對時能準確找出遺漏。Capture 不加。
 
 **Delay**（延遲）:
-同一個 Tag 從 TX 送出到 RX 收到的時間，包含兩組 Virtual Pair 與 Forwarding Delay。
+同一筆 Frame 從 TX 送出到 RX 收到的時間，包含兩組 Virtual Pair 與 Forwarding Delay。
 
 **Measured Offset**（量測到的 Offset）:
-RX 收到的 Roll 減去同一個 Tag 送出時的 Roll，也就是 Proxy 實際加上的 Offset，與模擬的船體 Roll 無關。
+RX 收到的 Roll 減去比對到的送出 Frame 的 Roll，也就是 Proxy 實際加上的 Offset，與船體 Roll 無關。
 
 **Missing**（遺漏）:
-Tag 跳號所代表、沒有回到 RX 的 Frame 數。
+送出後沒有回到 RX 的 Frame 數；5 秒內沒回來就算遺漏。
+
+**Unmatched**（對不上）:
+RX 收到、但對不回任何送出 Frame 的筆數。

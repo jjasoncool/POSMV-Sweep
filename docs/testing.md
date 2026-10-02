@@ -28,7 +28,9 @@ ctest --test-dir build --output-on-failure
 ```
 
 Generated frames use zero accelerations/heave/pitch and status G as test fixtures,
-not measured POS MV behavior. `--roll` selects a fixed Roll; `--sine-roll` selects
+not measured POS MV behavior. The supplied POS MV capture
+(`tests/data/20260904_TSS1 POSMV.txt`, CTest `capture`) covers real values,
+including hexadecimal accelerations. `--roll` selects a fixed Roll; `--sine-roll` selects
 elapsed-time negative-first sine Roll. Default generated run is 100 frames.
 Replay stops at EOF, unless limited by explicit `--count`. Invalid frames are
 discarded/counted. `--unpaced` is deterministic file-only output. Default output
@@ -72,8 +74,10 @@ verification/2026-10-01-com0com-2.2.2.0.md.
    controls are on the 環境與進階 page.
 2. In the Proxy, choose the input and output COM the Simulator names, then 連線.
 3. In the Simulator, choose a data source and press 開始測試: RX opens first,
-   then TX. With the Heave tag on (環境與進階, default on), RX shows delay,
-   missing frames and the measured Offset.
+   then TX. RX matches each returned frame with the frame sent, by every byte
+   except Roll, for any source including a capture: matched, byte-identical,
+   missing and unmatched counts, delay and the measured Offset. The Heave tag
+   (環境與進階, default on) makes generated frames unique, so losses are exact.
 
 The self-test needs all four ports, so it reports a busy port while the Proxy
 is connected. Runs of this chain are recorded in verification/2026-10-02-*.md;

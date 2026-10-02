@@ -28,7 +28,9 @@ also restarts at CENTER. Connection settings apply on the next Connect
 (disconnect before changing them).
 
 For Virtual COM testing pick the input and output ports the Simulator shows
-from the dropdowns (重新掃描 COM refreshes them). Serial settings are explicit
+from the dropdowns (重新掃描 COM refreshes them). Input and output must differ:
+the form starts with two different ports, and Connect stays disabled, with the
+reason shown, while they are the same or no port exists. Serial settings are explicit
 8N1 without flow control, not a claim about actual POS MV settings. Baud is
 not checked against a rate: output follows the input.
 
