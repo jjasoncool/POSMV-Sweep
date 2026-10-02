@@ -19,13 +19,14 @@ class RollChart {
         cairo_set_source_rgb(cr,0.08,0.09,0.11); cairo_paint(cr);
         const double end=now();
         double limit=10;
-        for(const auto& p:self.points_) for(double v:p.values) limit=std::max(limit,std::abs(v)*1.1);
+        for(const auto& p:self.points_) for(double v:p.values) if(!std::isnan(v)) limit=std::max(limit,std::abs(v)*1.1);
         cairo_set_source_rgb(cr,0.4,0.4,0.4); cairo_move_to(cr,0,height/2.0); cairo_line_to(cr,width,height/2.0); cairo_stroke(cr);
         const double colors[3][3]={{0.2,0.8,1},{1,0.7,0.1},{0.3,1,0.4}};
         for(unsigned series=0;series<3;++series) {
             cairo_set_source_rgb(cr,colors[series][0],colors[series][1],colors[series][2]);
             cairo_set_line_width(cr,1.5); bool first=true;
             for(const auto& p:self.points_) {
+                if(std::isnan(p.values[series])) { first=true; continue; }  // break: no output was sent
                 const double x=(p.time-end+10)/10*width;
                 const double y=height/2.0-p.values[series]/limit*(height/2.0-8);
                 if(first) cairo_move_to(cr,x,y); else cairo_line_to(cr,x,y); first=false;
@@ -43,6 +44,12 @@ public:
         const auto time=now(); points_.push_back({time,{real,offset,output}});
         while(!points_.empty() && (points_.front().time<time-10 || points_.size()>200)) points_.pop_front();
         if(area_) gtk_widget_queue_draw(area_);
+    }
+    // Ends the current line so a stale or disconnected period is not drawn as output.
+    void break_line() {
+        if(points_.empty() || std::isnan(points_.back().values[0])) return;
+        const double none=std::nan("");
+        points_.push_back({now(),{none,none,none}});
     }
 };
 }

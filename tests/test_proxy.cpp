@@ -22,8 +22,11 @@ int main() {
             state.invalid || state.real != 2 || state.output != 2 || state.offset != 0) {
             std::cerr << "Simulation/pass-through failed\n"; return 1;
         }
+        if (state.state != posmv::ProxyState::Active || state.output_timing.current_hz <= 0) {
+            std::cerr << "Flowing input should report Active with a current output rate\n"; return 1;
+        }
         engine.stop();
-        if (engine.snapshot().connected) return 1;
+        if (engine.snapshot().connected || engine.snapshot().state != posmv::ProxyState::Disconnected) return 1;
     }
     config.enabled = true; engine.configure(config);
     engine.start("COM11", "COM12", 38400, 100, true);
