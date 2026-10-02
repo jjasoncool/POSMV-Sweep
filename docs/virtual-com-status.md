@@ -4,7 +4,7 @@
 
 ## 結構
 
-- **判斷規則**（`src/environment/virtual_com.*`，不呼叫作業系統）：配號，建立、移除、解除安裝的判斷，TX／Input／Output／RX 角色對應，擁有權記錄格式，以及舊版記錄匯入。CTest `virtual_com` 有 16 項行為測試。
+- **判斷規則**（`src/environment/virtual_com.*`，不呼叫作業系統）：配號，建立、移除、解除安裝的判斷，TX／Input／Output／RX 角色對應，擁有權記錄格式，以及舊版記錄匯入。CTest `virtual_com` 有 17 項行為測試。配對是否存在以匯流排裝置的 `PortNum` 為準，不看殘留的埠設定。
 - **Windows 端**（`src/platform/windows/virtual_com_worker.cpp`）：以 `posmv-simulator env <動作> --result FILE --legacy FILE` 執行。動作分兩類：
   - 不需要 UAC：`inspect`、`test`
   - 經 UAC 提升權限：`install`、`create`、`remove`、`uninstall`
@@ -39,10 +39,15 @@
 ## 解除安裝
 
 - 只有在驅動是本程式安裝的、而且電腦上沒有其他程式的配對時才允許。
-- 流程：先移除本程式配對，再執行 com0com 的 `uninstall.exe /S`。如果驅動服務仍在，提示重新開機。
+- 流程：
+  1. 移除本程式配對。
+  2. 以 `SetupUninstallOEMInfW` 把 com0com 套件從 Windows 驅動程式庫移除。2.2.2.0 自己的解除安裝程式會留下孤兒套件，所以這一步要先做。
+  3. 執行 com0com 的 `uninstall.exe /S`。
 
-## 驗證狀態（2026-10-01，本機）
+  如果驅動服務仍在，提示重新開機。
 
-- 已通過：CTest 7/7，含 `virtual_com`；以一般權限執行 `inspect` 與 `test`，四個方向的雙向自測都通過，每個方向約 15 ms。
-- 尚未實測：新程式需要 UAC 的 `install`、`create`、`remove`、`uninstall`。
+## 驗證狀態（2026-10-02，本機）
+
+- 已通過：CTest 7/7，`virtual_com` 共 17 項行為測試；`remove`、`uninstall`、`install`、`create`、`test` 的完整生命週期實測。詳見 [2026-10-02-virtual-com-lifecycle.md](verification/2026-10-02-virtual-com-lifecycle.md)。
+- 尚未實測：透過 Simulator 按鈕的 UAC 路徑與取消 UAC；有其他程式配對或驅動被擋時的實機情境。
 - 風險：Microsoft 正逐步取消對交叉簽章驅動的信任，2.2.2.0 之後可能被擋。
