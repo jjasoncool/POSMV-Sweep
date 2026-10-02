@@ -14,7 +14,9 @@ struct Controller {
     posmv::BeamView beam;
     GtkWidget *input, *output, *scan, *baud, *timeout, *connect, *state;
     GtkWidget *enable, *mode, *mode_fields, *angle, *cycle, *fixed_offset, *invert, *finish, *rate_info;
-    GtkWidget *limit, *rate_limit, *notice, *warning, *motion, *diagnostics;
+    GtkWidget *limit, *rate_limit, *notice, *apply, *motion, *diagnostics;
+    posmv::SweepConfig applied;  // what the last Apply or Connect handed to the engine
+    std::string connect_error;
     bool syncing{};
     guint timer{};
 };
@@ -28,7 +30,14 @@ posmv::SweepConfig settings(Controller* c) {
     config.fixed_offset_deg = gtk_spin_button_get_value(GTK_SPIN_BUTTON(c->fixed_offset));
     return config;
 }
-void configure(Controller* c) { c->engine.configure(settings(c)); }
+void configure(Controller* c) { c->applied = settings(c); c->engine.configure(c->applied); }
+// Settings that need Apply differ from what was applied (only the fields the planned mode uses).
+bool unapplied(const posmv::SweepConfig& planned, const posmv::SweepConfig& applied) {
+    if (planned.mode != applied.mode) return true;
+    if (planned.mode == posmv::SweepMode::Fixed) return planned.fixed_offset_deg != applied.fixed_offset_deg;
+    return planned.amplitude_deg != applied.amplitude_deg || planned.cycle_seconds != applied.cycle_seconds ||
+        planned.direction != applied.direction;
+}
 unsigned selected_baud(Controller* c) {
     const auto index = std::min<std::size_t>(gtk_drop_down_get_selected(GTK_DROP_DOWN(c->baud)), std::size(posmv::standard_bauds) - 1);
     return posmv::standard_bauds[index];
@@ -58,6 +67,7 @@ void apply(GtkButton*, gpointer data) {
     try {
         const auto config = settings(c);
         c->engine.configure(config);
+        c->applied = config;
         const auto s = c->engine.snapshot();
         const bool fixed = config.mode == posmv::SweepMode::Fixed;
         const char* text = !s.connected ? "設定已更新，連線後生效"
@@ -67,15 +77,17 @@ void apply(GtkButton*, gpointer data) {
         gtk_label_set_text(GTK_LABEL(c->notice), text);
     } catch (const std::exception& e) { gtk_label_set_text(GTK_LABEL(c->notice), e.what()); }
 }
+// Connection problems show beside the Connect button, in the state label.
 void connect_clicked(GtkButton*, gpointer data) {
     auto* c = static_cast<Controller*>(data);
     gtk_label_set_text(GTK_LABEL(c->notice), "");
+    c->connect_error.clear();
     if (c->engine.snapshot().connected) { c->engine.stop(); return; }
     try {
         configure(c);
         c->engine.stale_timeout(std::chrono::milliseconds(gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(c->timeout))));
         c->engine.start(posmv::selected_port(c->input), posmv::selected_port(c->output), selected_baud(c));
-    } catch (const std::exception& e) { gtk_label_set_text(GTK_LABEL(c->notice), e.what()); }
+    } catch (const std::exception& e) { c->connect_error = e.what(); }
 }
 void scan_ports(GtkButton*, gpointer data) {
     auto* c = static_cast<Controller*>(data);
@@ -116,36 +128,35 @@ gboolean refresh(gpointer data) {
         gtk_check_button_set_active(GTK_CHECK_BUTTON(c->enable), s.sweep_enabled && !s.sweep_finishing);
         c->syncing = false;
     }
-    auto* state = conflict.empty()
-        ? g_markup_printf_escaped("<span foreground=\"%s\">●</span> %s", state_color(s.state), state_text(s).c_str())
-        : g_markup_printf_escaped("<span foreground=\"#c25e00\">● %s</span>", conflict.c_str());
+    auto* state = !conflict.empty() ? g_markup_printf_escaped("<span foreground=\"#c25e00\">● %s</span>", conflict.c_str())
+        : !s.connected && !c->connect_error.empty()
+            ? g_markup_printf_escaped("<span foreground=\"#d0342c\">● 無法連線：%s</span>", c->connect_error.c_str())
+            : g_markup_printf_escaped("<span foreground=\"%s\">●</span> %s", state_color(s.state), state_text(s).c_str());
     gtk_label_set_markup(GTK_LABEL(c->state), state); g_free(state);
     const auto planned = settings(c);
+    // Blue Apply means some settings on screen are not in effect yet.
+    if (unapplied(planned, c->applied)) gtk_widget_add_css_class(c->apply, "suggested-action");
+    else gtk_widget_remove_css_class(c->apply, "suggested-action");
     const bool sine = planned.mode == posmv::SweepMode::Sine;
-    std::ostringstream rate, warning;
-    if (sine) rate << std::fixed << std::setprecision(1) << "最大擺動速度 " << posmv::peak_sweep_rate(planned) << "°/s";
-    gtk_label_set_text(GTK_LABEL(c->rate_info), rate.str().c_str());
-    const double limit = gtk_spin_button_get_value(GTK_SPIN_BUTTON(c->limit));
-    warning << std::fixed;
-    if (s.over_limit && s.state == posmv::ProxyState::Active)
-        warning << "⚠ 輸出 Roll " << std::setprecision(2) << s.output << "° 超過 MBES 穩定上限 ±" << std::setprecision(1) << limit << "°";
-    else if (s.over_limit_count) warning << "輸出 Roll 曾超過 MBES 穩定上限";
-    if (s.over_limit_count) warning << "（累計 " << s.over_limit_count << " 筆）";
+    std::ostringstream rate;
+    rate << std::fixed << std::setprecision(1);
     if (sine && posmv::peak_sweep_rate(planned) > gtk_spin_button_get_value(GTK_SPIN_BUTTON(c->rate_limit)))
-        warning << (warning.tellp() > 0 ? "\n" : "") << "⚠ 最大擺動速度超過設定上限：部分 MBES 會標記這些 ping";
-    auto* escaped = g_markup_escape_text(warning.str().c_str(), -1);
-    const std::string markup = std::string("<span foreground=\"#c25e00\">") + escaped + "</span>";
-    g_free(escaped);
-    gtk_label_set_markup(GTK_LABEL(c->warning), markup.c_str());
+        rate << "<span foreground=\"#c25e00\">最大擺動速度 " << posmv::peak_sweep_rate(planned) << "°/s ⚠ 超過上限</span>";
+    else if (sine) rate << "最大擺動速度 " << posmv::peak_sweep_rate(planned) << "°/s";
+    gtk_label_set_markup(GTK_LABEL(c->rate_info), rate.str().c_str());
+    const double limit = gtk_spin_button_get_value(GTK_SPIN_BUTTON(c->limit));
     const bool sending = s.state == posmv::ProxyState::Active && s.output_count;
     if (sending) c->chart.add(s.real, s.offset, s.output);
     else c->chart.break_line();
     c->beam.update(s.real, s.output, limit, sending);
     std::ostringstream motion, diagnostics;
     motion << std::fixed << std::setprecision(2) << "<span size=\"x-large\">";
-    if (s.state == posmv::ProxyState::Active)
-        motion << "Real Roll " << s.real << "°　　Offset " << s.offset << "°　　Output " << s.output << "°";
-    else if (s.state == posmv::ProxyState::Stale && s.output_count)
+    if (s.state == posmv::ProxyState::Active) {
+        motion << "Real Roll " << s.real << "°　　Offset " << s.offset << "°　　";
+        // Output turns orange while it exceeds the MBES limit.
+        if (sending && s.over_limit) motion << "<span foreground=\"#c25e00\">Output " << s.output << "°</span>";
+        else motion << "Output " << s.output << "°";
+    } else if (s.state == posmv::ProxyState::Stale && s.output_count)
         motion << "最後值（已停止輸出）　Real Roll " << s.real << "°　Offset " << s.offset << "°　Output " << s.output << "°";
     else motion << "Real Roll —　　Offset —　　Output —";
     motion << "</span>";
@@ -157,7 +168,8 @@ gboolean refresh(gpointer data) {
         << "　截斷 " << s.clipped << "\n"
         << "輸出間隔（ms）：最小 " << out.intervals.min_ms << "　平均 " << out.intervals.mean_ms
         << "　p99 " << out.intervals.p99_ms << "　最大 " << out.intervals.max_ms << "　｜　"
-        << std::setprecision(2) << "轉送延遲：平均 " << s.forward_mean_ms << " ms　最大 " << s.forward_max_ms << " ms";
+        << std::setprecision(2) << "轉送延遲：平均 " << s.forward_mean_ms << " ms　最大 " << s.forward_max_ms << " ms\n"
+        << "Output 超出 MBES 上限：累計 " << s.over_limit_count << " 筆";
     gtk_label_set_markup(GTK_LABEL(c->motion), motion.str().c_str());
     gtk_label_set_text(GTK_LABEL(c->diagnostics), diagnostics.str().c_str());
     return G_SOURCE_CONTINUE;
@@ -213,7 +225,7 @@ void activate(GtkApplication* application, gpointer) {
     gtk_widget_set_tooltip_text(c->enable, "關閉時照常轉送原始資料，不加 Offset");
     const char* modes[] = {"正弦 Sweep", "固定 Offset（驗證用）", nullptr};
     c->mode = gtk_drop_down_new_from_strings(modes);
-    gtk_widget_set_size_request(c->mode, 190, -1);  // wide enough for either mode, so Apply never moves
+    gtk_widget_set_size_request(c->mode, 190, -1);  // wide enough for either mode, so the fields never move
     c->angle = number(0, 90, 0.1, 10, 5);
     c->cycle = number(0.1, 3600, 0.1, 4, 6);
     gtk_widget_set_tooltip_text(c->cycle, "一個 Cycle：CENTER → 負峰 → CENTER → 正峰 → CENTER（反轉時先正）");
@@ -221,34 +233,33 @@ void activate(GtkApplication* application, gpointer) {
     c->mode_fields = gtk_stack_new();
     gtk_stack_add_named(GTK_STACK(c->mode_fields), row({text("幅度 Angle ±"), c->angle, text("°　週期 Cycle"), c->cycle, text("秒")}), "sine");
     gtk_stack_add_named(GTK_STACK(c->mode_fields), row({text("Offset"), c->fixed_offset, text("°")}), "fixed");
-    add(row({c->enable, text("模式"), c->mode, c->mode_fields, button("套用", G_CALLBACK(apply))}));
+    add(row({c->enable, text("模式"), c->mode, c->mode_fields}));
     c->invert = gtk_check_button_new_with_label("反轉（先正後負）");
     c->finish = gtk_check_button_new_with_label("關閉與套用時收尾到 CENTER（不立即跳回 0）");
     gtk_widget_set_tooltip_text(c->finish, "關閉 Sweep 或套用新設定時，Offset 沿正弦走到下一個 CENTER 才停止或切換");
-    c->rate_info = gtk_label_new(""); gtk_widget_set_hexpand(c->rate_info, TRUE); gtk_label_set_xalign(GTK_LABEL(c->rate_info), 1);
-    add(row({c->invert, c->finish, c->rate_info}));
+    // Apply's feedback sits right above the button.
+    c->notice = gtk_label_new(""); gtk_widget_set_hexpand(c->notice, TRUE);
+    gtk_label_set_xalign(GTK_LABEL(c->notice), 1); gtk_label_set_ellipsize(GTK_LABEL(c->notice), PANGO_ELLIPSIZE_END);
+    add(row({c->invert, c->finish, c->notice}));
     c->limit = number(0.5, 90, 0.5, 10, 5);
     gtk_widget_set_tooltip_text(c->limit, "下游 MBES 能補償的最大 |Roll|，請依機型設定（例如 NORBIT ±10°；R2Sonic 約 ±(160° − sector)/2）。"
         "只用來警告，不會限制輸出");
     c->rate_limit = number(1, 360, 1, 20, 4);
     gtk_widget_set_tooltip_text(c->rate_limit, "Offset 變化速度的警告門檻；部分 MBES 會標記 Roll 變化太快的 ping。"
         "下游是 RESON 時請改成 10°/s");
-    add(row({text("MBES 穩定上限 ±"), c->limit, text("°　擺動速度上限"), c->rate_limit, text("°/s")}));
+    c->rate_info = gtk_label_new("");
+    // Apply closes the Sweep block at its bottom right.
+    c->apply = button("套用", G_CALLBACK(apply));
+    gtk_widget_set_tooltip_text(c->apply, "套用模式、幅度、週期、固定 Offset 與反轉；有未套用的變更時按鈕是藍色。"
+        "Sweep 開啟、收尾到 CENTER 與兩個上限一改就生效，不需要套用");
+    auto* spacer = gtk_label_new(""); gtk_widget_set_hexpand(spacer, TRUE);
+    add(row({text("MBES 穩定上限 ±"), c->limit, text("°　擺動速度上限"), c->rate_limit, text("°/s"), c->rate_info, spacer, c->apply}));
     c->engine.stabilisation_limit(gtk_spin_button_get_value(GTK_SPIN_BUTTON(c->limit)));
     g_signal_connect(c->enable, "toggled", G_CALLBACK(changed), c);
     g_signal_connect(c->mode, "notify::selected", G_CALLBACK(mode_changed), c);
     g_signal_connect(c->finish, "toggled", G_CALLBACK(finish_toggled), c);
     g_signal_connect(c->limit, "value-changed", G_CALLBACK(limit_changed), c);
     add(gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
-    // Status: a fixed-height message area keeps the values and chart from moving.
-    auto* messages = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
-    gtk_widget_set_size_request(messages, -1, 58);
-    c->notice = gtk_label_new(""); c->warning = gtk_label_new("");
-    for (auto* label : {c->notice, c->warning}) {
-        gtk_label_set_wrap(GTK_LABEL(label), TRUE); gtk_label_set_xalign(GTK_LABEL(label), 0);
-        gtk_box_append(GTK_BOX(messages), label);
-    }
-    add(messages);
     c->motion = add(gtk_label_new(""));
     c->diagnostics = add(gtk_label_new("")); gtk_label_set_xalign(GTK_LABEL(c->diagnostics), 0);
     auto* development = add(gtk_label_new(nullptr));
@@ -264,6 +275,7 @@ void activate(GtkApplication* application, gpointer) {
     gtk_box_append(GTK_BOX(trend), legend); gtk_box_append(GTK_BOX(trend), chart);
     auto* bottom = add(row({c->beam.create(), trend})); gtk_widget_set_vexpand(bottom, TRUE);
     gtk_widget_set_hexpand(trend, TRUE);
+    c->applied = settings(c);
     c->timer = g_timeout_add(100, refresh, c);
     refresh(c);
     g_object_set_data_full(G_OBJECT(window), "controller", c, destroy);
