@@ -1,0 +1,34 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "release",
+      "displayName": "Release build for delivery (MSYS2 UCRT64)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-release",
+      "environment": { "PATH": "C:/msys64/ucrt64/bin;C:/msys64/usr/bin;$penv{PATH}" },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_TESTING": "OFF",
+        "POSMV_BUILD_GUI": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "release", "configurePreset": "release" }
+  ],
+  "packagePresets": [
+    { "name": "release", "configurePreset": "release", "generators": ["ZIP"] }
+  ],
+  "workflowPresets": [
+    {
+      "name": "package",
+      "displayName": "Build the portable ZIP",
+      "steps": [
+        { "type": "configure", "name": "release" },
+        { "type": "build", "name": "release" },
+        { "type": "package", "name": "release" }
+      ]
+    }
+  ]
+}
