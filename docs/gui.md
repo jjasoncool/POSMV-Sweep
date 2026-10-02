@@ -20,30 +20,33 @@ This fixes DLL loading for local development; it is not yet a release installer
 with GTK assets and third-party license notices. A missing session D-Bus warning
 may still appear in stderr; the tested GUI stays running without that service.
 
-The default offline simulation produces valid TSS1 input with +2 degree real
-Roll. Connect starts independent receiver and output workers. Start Sweep and
-Stop Sweep toggle modulation only; Stop Sweep does not stop communication.
-Angle, cycle and direction require Apply and restart at CENTER (offset may jump).
-Enabling Sweep also restarts at CENTER. Connection settings and output
-rate apply on the next Connect (disconnect before changing them).
+Connect opens the selected input and output ports and starts one forwarding
+worker. The Sweep switch toggles modulation only; turning it off does not stop
+communication. Angle, cycle, direction and mode require Apply and restart at
+CENTER (offset may jump unless finish-at-CENTER is selected). Enabling Sweep
+also restarts at CENTER. Connection settings apply on the next Connect
+(disconnect before changing them).
 
-For Virtual COM testing uncheck offline mode, enter COM11 input and COM12
-output, and use matching simulator/monitor pairs. Serial settings are explicit
+For Virtual COM testing pick the input and output ports the Simulator shows
+from the dropdowns (重新掃描 COM refreshes them). Serial settings are explicit
 8N1 without flow control, not a claim about actual POS MV settings. Baud is
-validated against the selected output rate.
+not checked against a rate: output follows the input.
 
-The output worker resamples the latest valid input at its configured rate,
-using absolute monotonic deadlines. It emits nothing until the first valid
-input arrives. OFF preserves the selected frame bytes, but resampling means
-it does not guarantee one output per input record. GUI refresh is 10 Hz.
+Each valid input frame is forwarded as soon as it arrives (adr/0001): unchanged
+with Sweep OFF, with only the Roll field rewritten when ON. Invalid input is
+dropped and counted. The GUI shows the forwarding delay, warns when |Output
+Roll| exceeds the operator-set MBES stabilisation limit or the peak Offset rate
+exceeds its limit, and offers a fixed-Offset commissioning mode and an optional
+finish-at-CENTER for OFF and Apply. GUI refresh is 10 Hz.
 
 Input freshness timeout is configurable, with a development default of 500 ms.
 Stale input suspends output and disables Sweep. Fresh input resumes output
-with Sweep OFF. This policy requires hardware commissioning. Physical Roll sign remains
-unconfirmed. Virtual COM integration and interactive GUI operations have not
-yet been end-to-end tested. Automated tests exercise background simulation,
-pass-through, modulation, rates and worker shutdown.
+with Sweep OFF and no settling hold. This policy requires hardware
+commissioning. Physical Roll sign remains unconfirmed; the fixed-Offset mode is
+for commissioning it. GUI end-to-end runs over Virtual COM pairs are recorded
+in `verification/`. Automated tests drive the engine through in-memory
+transports: pass-through, modulation, invalid input, stale handling, the MBES
+limit and finish-at-CENTER.
 
-Simulator GTK4 controls, file selection/replay controls in the main GUI, COM
-enumeration and automated Virtual COM installation are still separate pending
-work; the main GUI currently accepts manually entered COM names.
+The Simulator (GTK4) manages the Virtual COM pairs, sends test frames or a
+capture, and validates the proxy output; see `testing.md`.

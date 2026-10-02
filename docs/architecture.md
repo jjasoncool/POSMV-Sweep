@@ -1,11 +1,13 @@
 # Architecture and implementation status
 
 > The historical progress notes below are not the current acceptance checklist.
-> See `acceptance.md` for the confirmed delivery contract. The main proxy already
-> has background RX/output workers, thread-safe state, GTK controls and stale
-> input handling. Virtual COM lifecycle management and serial end-to-end
-> verification remain incomplete. Fixed-rate latest-frame resampling is decided;
-> phase restarts at Apply and OFF-to-ON are also decided, not open requirements.
+> See `acceptance.md` for the confirmed delivery contract. The main proxy
+> forwards on one background worker with thread-safe state, GTK controls and
+> stale input handling. Virtual COM lifecycle and GUI end-to-end runs are
+> verified on one machine (`verification/`); sustained runs, fault injection
+> and packaging remain. Each valid frame is forwarded on arrival (adr/0001,
+> superseding fixed-rate latest-frame resampling); phase restarts at Apply and
+> OFF-to-ON are also decided, not open requirements.
 
 Implemented: independent protocol library, bounded stream parser, preserving
 encoder, elapsed-time sine generator, clipping composer, offline replay CLI,
@@ -26,8 +28,9 @@ does not claim to be the first usable full operator version.
 
 Open commissioning questions: physical interface; baud/parity/data/stop bits;
 MBES model and TSS1 acceptance; Roll sign and actual beam steering response;
-latency tolerance; whether live output resamples or matches source rate.
+latency tolerance. (Live output now follows the source rate; see adr/0001.)
 No automatic water-depth control or sonar ping synchronization is implemented.
 
 Negative-first is the configurable default, not a claim about real port direction.
-Enabling/disabling phase transitions for a live system remain to be specified.
+OFF-to-ON and Apply restart at CENTER; OFF and Apply can optionally finish at
+the next CENTER instead of jumping.

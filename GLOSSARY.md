@@ -31,8 +31,8 @@ POS MV 輸出的 ASCII 姿態資料格式，含 Heave、Roll、Pitch 與狀態�
 一筆 TSS1 資料：25 bytes 本體加上 CRLF。
 _Avoid_: record、packet、sentence、motion
 
-**Latest Valid Frame**（最新有效 frame）:
-Proxy 最近收到且通過檢查的 Frame，是固定速率輸出的來源。
+**Valid Frame**（有效 Frame）:
+通過 TSS1 格式檢查的 Frame。Proxy 每收到一筆就轉送一筆；無效的丟棄並計數，不轉送。
 _Avoid_: latest motion
 
 **Capture**（capture 檔）:
@@ -72,6 +72,18 @@ Offset 為零的相位起點；套用設定與 OFF→ON 時，Sweep 都從這裡
 
 **Direction**（方向）:
 Offset 離開 CENTER 後先往哪一側擺；預設 Negative-first（先負），可反轉為 Positive-first。
+
+**Fixed Offset**（固定 Offset）:
+以固定角度取代週期性 Offset 的驗證模式，用於現場確認 Roll 的正負號與擺動方向。
+
+**Finish at CENTER**（收尾到 CENTER）:
+關閉 Sweep 或套用新設定時，讓 Offset 沿正弦走到下一個 CENTER 才停止或切換，不立即跳回；由操作員選擇，預設不啟用。
+
+**Stabilisation Limit**（MBES 穩定上限）:
+下游 MBES 能補償的最大 |Roll|，依機型由操作員設定。Output Roll 超過時，MBES 無法維持波束指向。
+
+**Peak Sweep Rate**（最大擺動速度）:
+Offset 變化最快時的角速度，等於 2π × Angle ÷ Cycle；部分 MBES 會標記 Roll 變化過快的 ping。
 
 ### 埠與環境
 
@@ -127,6 +139,9 @@ _Avoid_: Session Average、累積平均
 **Gap**（中斷）:
 兩筆 Frame 之間超過 Stale Timeout 的空檔；不計入間隔統計。
 
+**Forwarding Delay**（轉送延遲）:
+Proxy 從收到一筆 Frame 到寫出的時間。
+
 ### 測試
 
 **Fixed Frame OFF Test**（固定 frame OFF 比對）:
@@ -134,3 +149,15 @@ Sweep OFF 時，以已知的固定 Frame 逐 byte 比對 Proxy 輸出的測試�
 
 **Fault Injection**（故障注入）:
 Simulator 依設定刻意送出的異常資料：Malformed、Split、Garbage、Drop。
+
+**Tag**（序號）:
+Simulator 寫在測試 Frame 的 Heave 欄位裡的流水號，用來把 RX 收到的 Frame 對回 TX 送出的那一筆。只用於 Simulator 產生的資料；Capture 不加。
+
+**Delay**（延遲）:
+同一個 Tag 從 TX 送出到 RX 收到的時間，包含兩組 Virtual Pair 與 Forwarding Delay。
+
+**Measured Offset**（量測到的 Offset）:
+RX 收到的 Roll 減去同一個 Tag 送出時的 Roll，也就是 Proxy 實際加上的 Offset，與模擬的船體 Roll 無關。
+
+**Missing**（遺漏）:
+Tag 跳號所代表、沒有回到 RX 的 Frame 數。
