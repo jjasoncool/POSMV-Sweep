@@ -1,6 +1,6 @@
 #pragma once
+#include "scheduler/precise_wait.hpp"
 #include <chrono>
-#include <thread>
 #include <stdexcept>
 #include <algorithm>
 namespace posmv {
@@ -13,7 +13,7 @@ public:
         start_ = deadline_ = Clock::now();
     }
     double wait() {
-        std::this_thread::sleep_until(deadline_);
+        wait_until(deadline_);
         const auto now = Clock::now();
         const auto late = now - deadline_;
         if (late > std::chrono::milliseconds(1)) ++late_frames;
