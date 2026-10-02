@@ -23,17 +23,22 @@ may still appear in stderr; the tested GUI stays running without that service.
 Connect opens the selected input and output ports and starts one forwarding
 worker; connection errors show beside it, in the state label.
 
-The Sweep switch toggles modulation only; turning it off does not stop
-communication. Enabling Sweep restarts at CENTER.
+Apply and a blue Sweep toggle sit at the bottom right of the Sweep block.
 
-Mode, angle, cycle, fixed Offset and direction require Apply:
-- Apply sits at the bottom right of the Sweep block.
-- It turns blue while settings on screen are not in effect.
+The toggle shows the state: `Sweep：OFF`, `Sweep：ON` (pressed) or
+`Sweep：收尾中` during a soft stop.
+- OFF forwards the input unchanged (Output = Input).
+- One click ON takes the settings on screen and starts at CENTER.
+- One click OFF stops, at the next CENTER if finish-at-CENTER is selected.
+- Turning Sweep off does not stop communication.
+
+Apply saves mode, angle, cycle, fixed Offset and direction:
+- It turns blue while settings on screen are not saved.
 - Its feedback appears right above it.
 - With Sweep ON, Apply restarts at CENTER at once (the offset may jump), or at
-  the next CENTER when finish-at-CENTER is selected. With Sweep OFF, the new
-  settings start when Sweep is enabled.
-- The Sweep switch, finish-at-CENTER and both limits take effect without Apply.
+  the next CENTER when finish-at-CENTER is selected.
+- With Sweep OFF, it only saves.
+- Finish-at-CENTER and both limits take effect without Apply.
 
 Connection settings apply on the next Connect (disconnect before changing them).
 
