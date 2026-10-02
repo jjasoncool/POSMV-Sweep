@@ -39,6 +39,8 @@ Four endpoints, two pairs. The applications do not open the same endpoint.
 - [ ] Default tolerant replay plus selectable strict mode; reject zero valid frames.
 - [ ] Loop until Stop by default; optional once; restart from beginning after Stop.
 - [ ] Lock source/rate during TX; show position, loop count and sent count.
+- [ ] Rates 25/50/100/200 Hz; offer only bauds that carry the rate and select
+  the lowest automatically.
 - [ ] Absolute monotonic paced output, no catch-up bursts across loop boundaries.
 - [ ] Protocol, timing and behavior verdicts displayed independently.
 - [ ] Detailed errors, receive interval min/mean/max and current rate.
