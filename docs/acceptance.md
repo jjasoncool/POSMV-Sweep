@@ -83,15 +83,16 @@ protocol validity as proof of correct sweep behavior.
   CENTER before stopping, and Apply waits for it.
 - [ ] Fixed Offset mode for commissioning the Roll sign and direction.
 - [ ] Warn when |Output Roll| exceeds an operator-set MBES stabilisation limit
-  (default 15°, leaving Angle ±10° room for vessel roll), and count those frames.
+  (default 10°, the user's MBES), and count those frames.
 - [ ] Show the peak sweep rate 2π·Angle/Cycle; warn above an operator-set
   limit (default 20°/s; RESON flags pings above 10°/s).
 - [ ] Lock connection settings while connected.
 - [ ] Default configurable 500 ms stale timeout; suspend stale output and disable
   sweep; fresh input resumes output with sweep remaining OFF and no settling hold.
 - [ ] Real/offset/output values, ten-second trends, diagnostics and event log.
-- [ ] Beam sketch: a still ship and a line at the Offset angle with its value;
-  over-limit shown by colour.
+- [ ] Beam sketch: the ship leans with Real Roll (value above it); dashed line
+  for the Output, solid line for what the MBES can steer within ±limit, both
+  with values; the MBES range shown around the hull.
 - [ ] Distinguish Current Rate from Average Rate and reset stats coherently.
 
 ## 4. Verification gates

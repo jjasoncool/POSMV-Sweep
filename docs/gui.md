@@ -36,11 +36,18 @@ minimum for 25 Hz; set it to match the POS MV and MBES ports. Serial settings ar
 8N1 without flow control, not a claim about actual POS MV settings. Baud is
 not checked against a rate: output follows the input.
 
-Left of the trend chart, a beam sketch shows a still ship and a red line at the
-current Offset angle from vertical, labelled in degrees. A positive Offset
-points right; the port/starboard side still needs commissioning. The line turns
-orange while the output Roll exceeds the MBES limit, and grey while nothing is
-sent.
+Left of the trend chart, a beam sketch shows the ship from the stern. Its parts:
+- The ship leans with Real Roll, labelled above it.
+- A grey sector is the MBES range (±limit, default 10°), around the hull's
+  down axis, so it leans with the ship.
+- The MBES steers the beam relative to the hull by the Roll it receives. A red
+  line, labelled `Output`, shows that angle.
+- When |Output| exceeds the limit, the line turns dashed and an orange solid
+  line, labelled `實際`, stops at the limit: where the MBES can actually steer,
+  assuming it holds at its limit.
+- In the water, the Output line points at the Offset angle; positive is to the
+  right. The port/starboard side still needs commissioning.
+- Lines are grey while nothing is sent.
 
 Each valid input frame is forwarded as soon as it arrives (adr/0001): unchanged
 with Sweep OFF, with only the Roll field rewritten when ON. Invalid input is
