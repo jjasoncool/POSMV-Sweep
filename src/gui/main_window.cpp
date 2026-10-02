@@ -8,17 +8,29 @@ namespace {
 struct Controller {
     posmv::ProxyEngine engine;
     posmv::RollChart chart;
-    GtkWidget *input, *output, *baud, *rate, *angle, *cycle, *enable, *invert, *state, *notice, *motion, *diagnostics, *timeout;
+    GtkWidget *input, *output, *baud, *angle, *cycle, *enable, *invert, *state, *notice, *motion, *diagnostics, *timeout;
+    GtkWidget *mode, *fixed_offset, *finish, *limit, *rate_limit, *rate_info, *warning;
     bool syncing{};
     guint timer{};
 };
-void configure(Controller* c) {
+posmv::SweepConfig settings(Controller* c) {
     posmv::SweepConfig config;
     config.enabled = gtk_check_button_get_active(GTK_CHECK_BUTTON(c->enable));
     config.amplitude_deg = gtk_spin_button_get_value(GTK_SPIN_BUTTON(c->angle));
     config.cycle_seconds = gtk_spin_button_get_value(GTK_SPIN_BUTTON(c->cycle));
     config.direction = gtk_check_button_get_active(GTK_CHECK_BUTTON(c->invert)) ? posmv::SweepDirectionConvention::PositiveFirst : posmv::SweepDirectionConvention::NegativeFirst;
-    c->engine.configure(config);
+    config.mode = gtk_drop_down_get_selected(GTK_DROP_DOWN(c->mode)) == 1 ? posmv::SweepMode::Fixed : posmv::SweepMode::Sine;
+    config.fixed_offset_deg = gtk_spin_button_get_value(GTK_SPIN_BUTTON(c->fixed_offset));
+    return config;
+}
+void configure(Controller* c) { c->engine.configure(settings(c)); }
+void finish_toggled(GtkWidget*, gpointer data) {
+    auto* c = static_cast<Controller*>(data);
+    c->engine.finish_at_center(gtk_check_button_get_active(GTK_CHECK_BUTTON(c->finish)));
+}
+void limit_changed(GtkWidget*, gpointer data) {
+    auto* c = static_cast<Controller*>(data);
+    c->engine.stabilisation_limit(gtk_spin_button_get_value(GTK_SPIN_BUTTON(c->limit)));
 }
 void changed(GtkWidget*, gpointer data) {
     auto* c = static_cast<Controller*>(data);
@@ -28,17 +40,20 @@ void changed(GtkWidget*, gpointer data) {
 }
 void apply(GtkButton*, gpointer data) {
     auto* c = static_cast<Controller*>(data);
-    try { configure(c); gtk_label_set_text(GTK_LABEL(c->notice), "設定已套用，Sweep 從 CENTER 重啟；offset 可能跳變"); }
-    catch (const std::exception& e) { gtk_label_set_text(GTK_LABEL(c->notice), e.what()); }
+    try {
+        configure(c);
+        const bool waits = c->engine.snapshot().apply_pending;
+        gtk_label_set_text(GTK_LABEL(c->notice), waits ? "新設定將在下一個 CENTER 生效，並從 CENTER 開始"
+            : "設定已套用，Sweep 從 CENTER 重啟；offset 可能跳變");
+    } catch (const std::exception& e) { gtk_label_set_text(GTK_LABEL(c->notice), e.what()); }
 }
 void connect_clicked(GtkButton*, gpointer data) {
     auto* c = static_cast<Controller*>(data);
     try {
-        configure(c); const unsigned rates[] = {25, 50, 100};
+        configure(c);
         c->engine.stale_timeout(std::chrono::milliseconds(gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(c->timeout))));
         c->engine.start(posmv::selected_port(c->input), posmv::selected_port(c->output),
-            gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(c->baud)), rates[gtk_drop_down_get_selected(GTK_DROP_DOWN(c->rate))],
-            false);
+            gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(c->baud)));
         gtk_label_set_text(GTK_LABEL(c->notice), "");
     } catch (const std::exception& e) { gtk_label_set_text(GTK_LABEL(c->notice), e.what()); }
 }
@@ -54,7 +69,10 @@ std::string state_text(const posmv::ProxySnapshot& s) {
     switch (s.state) {
     case posmv::ProxyState::Disconnected: return "未連線";
     case posmv::ProxyState::Waiting: return "已連線，等待輸入資料";
-    case posmv::ProxyState::Active: return s.sweep_stopped_by_stale ? "運作中（輸入曾過期，Sweep 已自動關閉）" : "運作中";
+    case posmv::ProxyState::Active:
+        if (s.sweep_finishing) return "運作中：Sweep 收尾中，到下一個 CENTER 停止";
+        if (s.apply_pending) return "運作中：新設定將在下一個 CENTER 生效";
+        return s.sweep_stopped_by_stale ? "運作中（輸入曾過期，Sweep 已自動關閉）" : "運作中";
     case posmv::ProxyState::Stale: return "資料過期：已暫停輸出並關閉 Sweep";
     case posmv::ProxyState::Error: return "錯誤：" + s.error;
     }
@@ -62,12 +80,24 @@ std::string state_text(const posmv::ProxySnapshot& s) {
 }
 gboolean refresh(gpointer data) {
     auto* c = static_cast<Controller*>(data); const auto s = c->engine.snapshot();
-    for (auto* widget : {c->input, c->output, c->baud, c->rate, c->timeout}) gtk_widget_set_sensitive(widget, !s.connected);
+    for (auto* widget : {c->input, c->output, c->baud, c->timeout}) gtk_widget_set_sensitive(widget, !s.connected);
     if (s.connected) {
         c->syncing = true;
-        gtk_check_button_set_active(GTK_CHECK_BUTTON(c->enable), s.sweep_enabled);
+        gtk_check_button_set_active(GTK_CHECK_BUTTON(c->enable), s.sweep_enabled && !s.sweep_finishing);
         c->syncing = false;
     }
+    const auto planned = settings(c);
+    gtk_widget_set_sensitive(c->fixed_offset, planned.mode == posmv::SweepMode::Fixed);
+    std::ostringstream rate, warning;
+    rate << std::fixed << std::setprecision(1) << "最大擺動速度 " << posmv::peak_sweep_rate(planned) << "°/s";
+    gtk_label_set_text(GTK_LABEL(c->rate_info), rate.str().c_str());
+    const double limit = gtk_spin_button_get_value(GTK_SPIN_BUTTON(c->limit));
+    if (s.over_limit) warning << "⚠ 輸出 Roll " << std::fixed << std::setprecision(2) << s.output << "° 超過 MBES 穩定上限 ±" << limit << "°";
+    else if (s.over_limit_count) warning << "輸出 Roll 曾超過 MBES 穩定上限";
+    if (s.over_limit_count) warning << "（累計 " << s.over_limit_count << " 筆）";
+    if (posmv::peak_sweep_rate(planned) > gtk_spin_button_get_value(GTK_SPIN_BUTTON(c->rate_limit)))
+        warning << (warning.tellp() > 0 ? "\n" : "") << "⚠ 最大擺動速度超過設定上限：部分 MBES 會標記這些 ping";
+    gtk_label_set_text(GTK_LABEL(c->warning), warning.str().c_str());
     gtk_label_set_text(GTK_LABEL(c->state), state_text(s).c_str());
     if (s.state == posmv::ProxyState::Active && s.output_count) c->chart.add(s.real, s.offset, s.output);
     else c->chart.break_line();
@@ -86,7 +116,7 @@ gboolean refresh(gpointer data) {
         << "　截斷 " << s.clipped << "　中斷 " << in.gaps << " 次\n"
         << "輸出間隔（ms）：平均 " << out.intervals.mean_ms << "　最小 " << out.intervals.min_ms
         << "　最大 " << out.intervals.max_ms << "　p99 " << out.intervals.p99_ms << "\n"
-        << "遲到超過 1 ms：" << s.late << " 筆（最大 " << s.lateness_ms << " ms）";
+        << std::setprecision(2) << "轉送延遲（收到到寫出）：平均 " << s.forward_mean_ms << " ms　最大 " << s.forward_max_ms << " ms";
     gtk_label_set_text(GTK_LABEL(c->motion), motion.str().c_str());
     gtk_label_set_text(GTK_LABEL(c->diagnostics), diagnostics.str().c_str());
     return G_SOURCE_CONTINUE;
@@ -117,18 +147,35 @@ void activate(GtkApplication* application, gpointer) {
     c->output = row("輸出 COM", gtk_drop_down_new(nullptr, nullptr)); posmv::refresh_ports(c->output);
     c->baud = number("鮑率（8N1）", 1200, 4000000, 1200, 38400);
     c->timeout = number("資料過期門檻（ms）", 10, 60000, 10, 500);
-    const char* rates[] = {"25 Hz", "50 Hz", "100 Hz", nullptr}; c->rate = row("輸出速率", gtk_drop_down_new_from_strings(rates));
     c->angle = number("幅度 Angle（±°）", 0, 90, 0.1, 10); c->cycle = number("完整週期 Cycle（秒）", 0.1, 3600, 0.1, 4);
+    auto inline_row = [&](const char* label, std::initializer_list<GtkWidget*> widgets) {
+        auto* line = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        for (auto* widget : widgets) gtk_box_append(GTK_BOX(line), widget);
+        row(label, line);
+    };
+    const char* modes[] = {"正弦 Sweep", "固定 Offset（驗證用）", nullptr};
+    c->mode = gtk_drop_down_new_from_strings(modes);
+    c->fixed_offset = gtk_spin_button_new_with_range(-90, 90, 0.1); gtk_spin_button_set_value(GTK_SPIN_BUTTON(c->fixed_offset), 5);
+    inline_row("模式", {c->mode, gtk_label_new("固定 Offset（°）"), c->fixed_offset});
+    c->limit = gtk_spin_button_new_with_range(0.5, 90, 0.5); gtk_spin_button_set_value(GTK_SPIN_BUTTON(c->limit), 10);
+    c->rate_limit = gtk_spin_button_new_with_range(1, 360, 1); gtk_spin_button_set_value(GTK_SPIN_BUTTON(c->rate_limit), 10);
+    c->rate_info = gtk_label_new("");
+    inline_row("MBES 穩定上限（±°）", {c->limit, gtk_label_new("擺動速度上限（°/s）"), c->rate_limit, c->rate_info});
     c->enable = row("Sweep", gtk_check_button_new_with_label("開啟（關閉時照常輸出）"));
-    c->invert = row("方向 Direction", gtk_check_button_new_with_label("反轉（改為先正後負）"));
+    c->finish = gtk_check_button_new_with_label("關閉與套用時收尾到 CENTER（不立即跳回 0）");
+    c->invert = gtk_check_button_new_with_label("反轉（改為先正後負）");
+    inline_row("方向與收尾", {c->invert, c->finish});
     g_signal_connect(c->enable, "toggled", G_CALLBACK(changed), c);
+    g_signal_connect(c->finish, "toggled", G_CALLBACK(finish_toggled), c);
+    g_signal_connect(c->limit, "value-changed", G_CALLBACK(limit_changed), c);
     auto* buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8); gtk_box_append(GTK_BOX(box), buttons);
     auto button = [&](const char* label, GCallback cb) { auto* b = gtk_button_new_with_label(label); gtk_box_append(GTK_BOX(buttons), b); g_signal_connect(b, "clicked", cb, c); };
     button("重新掃描 COM", G_CALLBACK(scan_ports));
     button("連線", G_CALLBACK(connect_clicked)); button("中斷連線", G_CALLBACK(disconnect_clicked));
     button("套用 Sweep 設定", G_CALLBACK(apply));
     c->state = gtk_label_new("未連線"); c->notice = gtk_label_new(""); c->motion = gtk_label_new(""); c->diagnostics = gtk_label_new("");
-    for (auto* widget : {c->state, c->notice, c->motion, c->diagnostics}) gtk_box_append(GTK_BOX(box), widget);
+    c->warning = gtk_label_new("");
+    for (auto* widget : {c->state, c->notice, c->warning, c->motion, c->diagnostics}) gtk_box_append(GTK_BOX(box), widget);
     gtk_box_append(GTK_BOX(box), gtk_label_new("一個 Cycle：CENTER → 負峰 → CENTER → 正峰 → CENTER（反轉時先正）"));
     gtk_box_append(GTK_BOX(box), gtk_label_new("開發版：輸入過期停止輸出；恢復後 Sweep OFF。實體 Roll 方向尚未驗證。"));
     gtk_box_append(GTK_BOX(box),gtk_label_new("最近 10 秒：藍 Real ／ 黃 Offset ／ 綠 Output"));
