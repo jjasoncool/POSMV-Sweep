@@ -1,10 +1,10 @@
 #include "platform/environment_manager.hpp"
 #include <windows.h>
 #include <shellapi.h>
+#include "platform/windows/win32_error.hpp"
 #include <array>
 #include <algorithm>
 #include <stdexcept>
-#include <system_error>
 namespace posmv {
 struct EnvironmentManager::Impl {
     HANDLE process{};
@@ -21,9 +21,14 @@ void EnvironmentManager::start(const std::string& action, const std::filesystem:
     wchar_t exe[32768];
     const auto length = GetModuleFileNameW(nullptr, exe, 32768);
     if (!length || length >= 32768) throw std::runtime_error("Cannot locate application executable");
-    std::filesystem::create_directories(directory);
+    std::error_code ignored;  // a missing directory shows up below as a failed delete or a missing report
+    std::filesystem::create_directories(directory, ignored);
     const auto result = directory / "result.txt";
-    std::filesystem::remove(result);
+    if (!DeleteFileW(result.c_str())) {
+        const auto error = GetLastError();
+        if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND)
+            throw std::runtime_error("無法刪除上一次的結果檔：" + win32_message(error));
+    }
     // The Simulator runs its own environment worker, through UAC when pairs or the driver change.
     const std::wstring args = L"env " + std::wstring(action.begin(), action.end()) + L" --result \"" + result.wstring() +
         L"\" --legacy \"" + (directory / "owned.json").wstring() + L"\"";
@@ -34,7 +39,7 @@ void EnvironmentManager::start(const std::string& action, const std::filesystem:
     if (!ShellExecuteExW(&info)) {
         const auto error = GetLastError();
         if (error == ERROR_CANCELLED) throw std::runtime_error("已取消 Windows 權限提示，沒有做任何變更");
-        throw std::system_error(static_cast<int>(error), std::system_category(), "Environment operation");
+        throw std::runtime_error("無法啟動 Virtual COM 管理程式：" + win32_message(error));
     }
     impl_->process = info.hProcess;
 }

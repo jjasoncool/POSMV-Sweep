@@ -1,16 +1,17 @@
 #include "transport/serial_transport.hpp"
+#include "platform/windows/win32_error.hpp"
 #include <stdexcept>
 #include <system_error>
 #include <algorithm>
-#define WIN32_LEAN_AND_MEAN
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
 namespace posmv {
 namespace {
-void fail(const char* operation) {
-    throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), operation);
+[[noreturn]] void fail(DWORD error, const std::string& operation) {
+    throw std::system_error(static_cast<int>(error), win32_category(), operation);
+}
+// Reads the error before building any string, which could overwrite it.
+[[noreturn]] void fail(const char* operation) {
+    const DWORD error = GetLastError();
+    fail(error, operation);
 }
 }
 struct SerialTransport::Impl {
@@ -23,7 +24,10 @@ SerialTransport::SerialTransport(const std::string& port, unsigned baud) : impl_
         throw std::invalid_argument("Port must be COM<number>; baud must be positive");
     impl_->handle = CreateFileA(("\\\\.\\" + port).c_str(), GENERIC_READ | GENERIC_WRITE,
         0, nullptr, OPEN_EXISTING, 0, nullptr);
-    if (impl_->handle == INVALID_HANDLE_VALUE) fail("Open serial port");
+    if (impl_->handle == INVALID_HANDLE_VALUE) {
+        const DWORD error = GetLastError();
+        fail(error, "無法開啟 " + port);
+    }
     DCB settings{};
     settings.DCBlength = sizeof(settings);
     if (!GetCommState(impl_->handle, &settings)) fail("GetCommState");
