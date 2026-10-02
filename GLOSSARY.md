@@ -117,8 +117,15 @@ Validator 對接收資料的結論，分為 Protocol、Timing、Behavior 三種�
 **Observed Interval**（接收間隔）:
 RX 相鄰兩次收到 Frame 的時間差；不等於來源端的發送抖動。
 
-**Current Rate／Session Average**（即時速率／累積平均）:
-Current Rate 反映最近一段時間的速率；Session Average 是從本次連線開始累計的平均。
+**Current Rate**（即時速率）:
+最近 1 秒內的 Frame 數。
+
+**Average Rate**（平均速率）:
+本次連線中，從第一筆 Frame 起、資料流動期間的平均速率；不含 Gap。
+_Avoid_: Session Average、累積平均
+
+**Gap**（中斷）:
+兩筆 Frame 之間超過 Stale Timeout 的空檔；不計入間隔統計。
 
 ### 測試
 
