@@ -30,7 +30,9 @@ also restarts at CENTER. Connection settings apply on the next Connect
 For Virtual COM testing pick the input and output ports the Simulator shows
 from the dropdowns (重新掃描 COM refreshes them). Input and output must differ:
 the form starts with two different ports, and Connect stays disabled, with the
-reason shown, while they are the same or no port exists. Serial settings are explicit
+reason shown, while they are the same or no port exists. Baud is a list of
+standard values (1200 to 230400), defaulting to 9600, the POS MV manual's
+minimum for 25 Hz; set it to match the POS MV and MBES ports. Serial settings are explicit
 8N1 without flow control, not a claim about actual POS MV settings. Baud is
 not checked against a rate: output follows the input.
 

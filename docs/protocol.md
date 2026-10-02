@@ -30,9 +30,9 @@ POS MV sends TSS1 at 1–200 Hz and recommends at least 9600 baud at 25 Hz. ASCI
 8N1 needs 27 × 10 × rate bit/s: 6750 at 25 Hz, 13500 at 50 Hz, 27000 at 100 Hz
 and 54000 at 200 Hz (so 57,600 baud or more). The Simulator sends at 25, 50,
 100 or 200 Hz and offers only the standard bauds that carry the chosen rate,
-selecting the lowest: 9600, 19200, 38400 and 57600. The Proxy uses one baud for
-both ports and forwards at the input rate, so its output keeps up with any
-input that arrives.
+selecting the lowest: 9600, 19200, 38400 and 57600. The Proxy offers the same
+standard bauds, defaulting to 9600. It uses one baud for both ports and
+forwards at the input rate, so its output keeps up with any input that arrives.
 
 Parser accepts arbitrary chunks and retains at most 27 bytes. A new colon
 resynchronizes an incomplete candidate. Garbage outside candidates is ignored.

@@ -67,7 +67,8 @@ protocol validity as proof of correct sweep behavior.
 ## 3. Production GUI
 
 - [ ] Existing-port dropdowns and refresh, rather than manual-only entry; input
-  and output can never be the same port.
+  and output can never be the same port. Baud from standard values only,
+  default 9600.
 - [ ] Accept every TSS1 frame POS MV sends, including hexadecimal accelerations
   (CTest `capture` uses the supplied capture).
 - [ ] Single-page Traditional Chinese controls retaining instrument terminology.
