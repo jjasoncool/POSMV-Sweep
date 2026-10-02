@@ -176,7 +176,9 @@ private:
     std::optional<Tss1Frame> latest_; std::jthread worker_;
     InputFreshness freshness_;
     double gap_seconds_ = 0.5, forward_total_ms_{};
-    double limit_deg_ = 10;  // the most conservative documented MBES range (NORBIT ±10°)
+    // Warning threshold only; the operator sets the downstream MBES's range (NORBIT ±10°,
+    // Kongsberg ±15°, R2Sonic about ±(160° − sector)/2). 15° leaves Angle ±10° room for vessel roll.
+    double limit_deg_ = 15;
     bool finish_at_center_{};
     std::optional<double> stop_at_;  // sweep time of the CENTER where a finishing Sweep stops
     std::optional<double> apply_at_;  // sweep time of the CENTER where pending_ takes effect
