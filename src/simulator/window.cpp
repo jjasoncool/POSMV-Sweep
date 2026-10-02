@@ -12,6 +12,8 @@
 #include "platform/environment_manager.hpp"
 #include <filesystem>
 #include "simulator/replay_source.hpp"
+#include "simulator/test_signal.hpp"
+#include "simulator/tag_tracker.hpp"
 #include <mutex>
 #include <fstream>
 #include <array>
@@ -19,7 +21,12 @@
 #include <sstream>
 namespace {
 struct State {
-    GtkWidget *tx, *rx, *file, *baud, *rate, *loop, *tx_view, *rx_view, *strict, *environment, *proxy_ports, *off_check, *fixed_roll, *sine, *amplitude, *cycle;
+    GtkWidget *tx, *rx, *file, *baud, *rate, *loop, *tx_view, *rx_view, *strict, *environment, *proxy_ports, *off_check, *fixed_roll, *sine, *amplitude, *cycle, *tag_check;
+    // Tagged frames: TX records what it sent, RX pairs what came back (shared clock below).
+    std::mutex tag_mutex;
+    posmv::TagTracker tags;
+    const std::chrono::steady_clock::time_point epoch = std::chrono::steady_clock::now();
+    double since_epoch() const { return std::chrono::duration<double>(std::chrono::steady_clock::now() - epoch).count(); }
     posmv::EnvironmentManager manager;
     std::filesystem::path state_dir;
     std::jthread sender, receiver;
@@ -52,13 +59,15 @@ void start_tx(GtkButton*, gpointer p) {
     const unsigned baud = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(s->baud));
     const unsigned rates[] = {25,50,100}; const unsigned rate = rates[gtk_drop_down_get_selected(GTK_DROP_DOWN(s->rate))];
     const bool loop = gtk_check_button_get_active(GTK_CHECK_BUTTON(s->loop));
-    const double fixed=gtk_spin_button_get_value(GTK_SPIN_BUTTON(s->fixed_roll));
-    const bool sine=gtk_check_button_get_active(GTK_CHECK_BUTTON(s->sine));
-    posmv::SweepConfig sweep;
-    sweep.amplitude_deg=gtk_spin_button_get_value(GTK_SPIN_BUTTON(s->amplitude));
-    sweep.cycle_seconds=gtk_spin_button_get_value(GTK_SPIN_BUTTON(s->cycle));
+    posmv::TestSignal signal;
+    signal.fixed_roll_deg=gtk_spin_button_get_value(GTK_SPIN_BUTTON(s->fixed_roll));
+    signal.sine=gtk_check_button_get_active(GTK_CHECK_BUTTON(s->sine));
+    signal.sine_roll.amplitude_deg=gtk_spin_button_get_value(GTK_SPIN_BUTTON(s->amplitude));
+    signal.sine_roll.cycle_seconds=gtk_spin_button_get_value(GTK_SPIN_BUTTON(s->cycle));
+    // The fixed-frame OFF comparison needs identical frames, so it never tags.
+    signal.tag=gtk_check_button_get_active(GTK_CHECK_BUTTON(s->tag_check)) && !gtk_check_button_get_active(GTK_CHECK_BUTTON(s->off_check));
     const bool strict = gtk_check_button_get_active(GTK_CHECK_BUTTON(s->strict));
-    s->sender = std::jthread([s,port,path,baud,rate,loop,strict,fixed,sine,sweep](std::stop_token token) {
+    s->sender = std::jthread([s,port,path,baud,rate,loop,strict,signal](std::stop_token token) {
         try {
             posmv::validate_serial_throughput(baud,rate);
             std::vector<posmv::Tss1Frame> frames;
@@ -75,12 +84,21 @@ void start_tx(GtkButton*, gpointer p) {
             if(frames.empty()) throw std::runtime_error("檔案沒有有效的 TSS1 Frame");
             posmv::SerialTransport transport(port,baud); posmv::OutputScheduler clock(rate);
             std::uint64_t count=0;
+            const auto started=std::chrono::steady_clock::now();
             do {
                 for(const auto& frame:frames) {
                     if(token.stop_requested()) break;
                     clock.wait(); if(token.stop_requested()) break;
-                    transport.write(frame.raw+"\r\n"); ++count;
-                    s->message(true,preflight+"送出中：已送出 "+std::to_string(count)+" 筆\n最新："+frame.raw);
+                    std::string packet=frame.raw+"\r\n";
+                    if(path.empty()) {
+                        packet=posmv::test_frame(signal,std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count(),count);
+                        if(signal.tag) {  // record before writing so a fast return can still pair
+                            const auto sent=posmv::Tss1Parser().feed(packet).at(0);
+                            std::lock_guard lock(s->tag_mutex); s->tags.sent(count,s->since_epoch(),sent.roll_deg);
+                        }
+                    }
+                    transport.write(packet); ++count;
+                    s->message(true,preflight+"送出中：已送出 "+std::to_string(count)+" 筆\n最新："+packet.substr(0,packet.size()-2));
                 }
             } while(loop && !token.stop_requested());
             s->message(true,preflight+"送出結束，共 "+std::to_string(count)+" 筆");
@@ -100,9 +118,12 @@ void start_rx(GtkButton*, gpointer p) {
         s->message(false,"OFF 自動比對只支援固定 0°：請清空 Capture 檔、關閉正弦並設定 Roll=0");
         return;
     }
-    s->receiver = std::jthread([s,port,baud,compare](std::stop_token token) {
+    const bool tagged=gtk_check_button_get_active(GTK_CHECK_BUTTON(s->tag_check)) && !compare;
+    { std::lock_guard lock(s->tag_mutex); s->tags=posmv::TagTracker{}; }
+    s->receiver = std::jthread([s,port,baud,compare,tagged](std::stop_token token) {
         try {
             posmv::SerialTransport transport(port,baud); s->rx_ready=true; posmv::StreamValidator validator;
+            double offset_now{};
             std::array<char,4096> bytes{}; const auto start=std::chrono::steady_clock::now();
             posmv::FixedFrameCheck off(std::string(":000000  0000G 0000  0000") + char(13) + char(10));
             std::string latest;
@@ -111,8 +132,13 @@ void start_rx(GtkButton*, gpointer p) {
                 const auto n=transport.read(bytes); const std::string_view chunk(bytes.data(),n);
                 const auto seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
                 const auto frames = validator.feed(chunk); if(compare) off.feed(chunk);
+                const double received_at=s->since_epoch();
                 for(const auto& frame:frames) {
                     timing.observe(seconds);
+                    if(tagged) {
+                        std::lock_guard lock(s->tag_mutex);
+                        if(const auto pairing=s->tags.received(posmv::heave_tag(frame),received_at,frame.roll_deg)) offset_now=pairing->offset_deg;
+                    }
                     std::ostringstream motion; motion<<std::fixed<<std::setprecision(2)
                         <<"最新："<<frame.raw<<"\nRoll "<<frame.roll_deg<<"°　Pitch "<<frame.pitch_deg<<"°　Heave "<<frame.heave_m<<" m";
                     latest=motion.str();
@@ -122,7 +148,20 @@ void start_rx(GtkButton*, gpointer p) {
                     <<"接收中：有效 "<<validator.valid<<"　無效 "<<validator.invalid<<"　垃圾 "<<validator.garbage_bytes<<" bytes\n"
                     <<"速率：即時 "<<timing.current_rate(seconds)<<" Hz／平均 "<<timing.average_rate()<<" Hz　中斷 "<<timing.gaps()<<" 次\n"
                     <<"接收間隔（ms）：平均 "<<intervals.mean_ms<<"　最小 "<<intervals.min_ms<<"　最大 "<<intervals.max_ms<<"　p99 "<<intervals.p99_ms
-                    <<"\n（一次讀到多筆時間隔記為 0）\n"<<latest<<(validator.last_error.empty()?"":"\n"+validator.last_error);
+                    <<"\n（一次讀到多筆時間隔記為 0）\n";
+                if(tagged) {
+                    std::lock_guard lock(s->tag_mutex);
+                    const auto delay=s->tags.latency(); const auto shape=s->tags.offset_estimate();
+                    text<<"延遲（送出→收到，ms）：平均 "<<delay.mean_ms<<"　最大 "<<delay.max_ms<<"　p99 "<<delay.p99_ms
+                        <<"　遺漏 "<<s->tags.missing()<<" 筆\n"<<std::setprecision(2);
+                    if(shape && !shape->period_seconds && shape->amplitude_deg<0.05) text<<"量到的 Offset：固定 "<<shape->center_deg<<"°\n";
+                    else if(shape) {
+                        text<<"量到的 Offset：目前 "<<offset_now<<"°　幅度 ±"<<shape->amplitude_deg<<"°　週期 ";
+                        if(shape->period_seconds) text<<*shape->period_seconds<<" 秒"; else text<<"—";
+                        text<<"　中心 "<<shape->center_deg<<"°\n";
+                    }
+                }
+                text<<latest<<(validator.last_error.empty()?"":"\n"+validator.last_error);
                 s->message(false,text.str());
             }
             validator.finish(); off.finish();
@@ -233,6 +272,8 @@ void activate(GtkApplication* app,gpointer) {
     s->loop=gtk_check_button_new_with_label("循環播放直到停止"); gtk_check_button_set_active(GTK_CHECK_BUTTON(s->loop),TRUE); gtk_box_append(GTK_BOX(box),s->loop);
     s->strict=gtk_check_button_new_with_label("嚴格模式：異常或垃圾資料禁止發送"); gtk_box_append(GTK_BOX(box),s->strict);
     s->off_check=gtk_check_button_new_with_label("固定 0° Frame OFF 比對（不選 Capture 檔、正式程式 Sweep OFF）"); gtk_box_append(GTK_BOX(box),s->off_check);
+    s->tag_check=gtk_check_button_new_with_label("在 Heave 寫入序號，量測延遲與實際 Offset（OFF 比對時自動關閉）");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(s->tag_check),TRUE); gtk_box_append(GTK_BOX(box),s->tag_check);
     auto* buttons=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,10); gtk_box_append(GTK_BOX(box),buttons);
     auto button=[&](const char* text,GCallback callback) { auto* b=gtk_button_new_with_label(text); gtk_box_append(GTK_BOX(buttons),b); g_signal_connect(b,"clicked",callback,s); };
     button("選擇 Capture 檔",G_CALLBACK(choose));
@@ -241,7 +282,7 @@ void activate(GtkApplication* app,gpointer) {
     auto* views=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,24); gtk_box_set_homogeneous(GTK_BOX(views),TRUE);
     s->tx_view=status_label("送出：已停止"); s->rx_view=status_label("接收：已停止");
     gtk_box_append(GTK_BOX(views),s->tx_view); gtk_box_append(GTK_BOX(views),s->rx_view);
-    gtk_box_append(GTK_BOX(box),fixed_area(views,170));
+    gtk_box_append(GTK_BOX(box),fixed_area(views,230));
     s->timer=g_timeout_add(100,refresh,s);
     try { s->manager.start("inspect",s->state_dir); }
     catch(const std::exception& e) { gtk_label_set_text(GTK_LABEL(s->environment),e.what()); }

@@ -46,6 +46,9 @@ if(BUILD_TESTING)
   add_executable(test_sweep tests/test_sweep.cpp)
   target_link_libraries(test_sweep PRIVATE posmv_core)
   add_test(NAME sweep COMMAND test_sweep)
+  add_executable(test_signal tests/test_signal.cpp)
+  target_link_libraries(test_signal PRIVATE posmv_core)
+  add_test(NAME signal COMMAND test_signal)
   add_test(NAME replay COMMAND ${CMAKE_COMMAND}
     -DAPP=$<TARGET_FILE:posmv-sweep> -DFIXTURE=$<TARGET_FILE:test_core> -DBINARY=${CMAKE_CURRENT_BINARY_DIR}
     -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay.cmake)
