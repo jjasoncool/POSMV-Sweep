@@ -8,7 +8,12 @@
 - **Windows 端**（`src/platform/windows/virtual_com_worker.cpp`）：以 `posmv-simulator env <動作> --result FILE --legacy FILE` 執行。動作分兩類：
   - 不需要 UAC：`inspect`、`test`
   - 經 UAC 提升權限：`install`、`create`、`remove`、`uninstall`
-- **Simulator**：`EnvironmentManager` 啟動上述工作程式並等它結束，再讀 `result.txt`（`status=`、`message=`、`roles=` 三種行）。Simulator 開啟時自動執行一次 `inspect`，並以醒目字體顯示正式程式要選的兩個埠與鮑率。舊的 PowerShell 管理腳本已移除。
+- **Simulator**：`EnvironmentManager` 啟動上述工作程式並等它結束，再讀 `result.txt`。結果檔有五種行：`status=`、`message=`、`roles=`、`driver=`（已安裝的版本），以及 `test=`（自測結果：`passed`、`busy`、`failed`）。
+  - Simulator 開啟時自動執行 `inspect`。環境就緒時（開啟時、安裝或建立之後）接著自動自測。
+  - 「測試」頁只有一行狀態，安裝驅動與建立虛擬 COM 埠的按鈕只在需要時出現；其餘管理動作在「環境與進階」頁。
+  - 以醒目字體顯示正式程式要選的兩個埠與鮑率。
+  - 正式程式佔用埠時，自測回報 `busy`，提示先中斷連線。
+  - 舊的 PowerShell 管理腳本已移除。
 
 ## 驅動
 
@@ -48,6 +53,6 @@
 
 ## 驗證狀態（2026-10-02，本機）
 
-- 已通過：CTest 7/7，`virtual_com` 共 17 項行為測試；`remove`、`uninstall`、`install`、`create`、`test` 的完整生命週期實測。詳見 [2026-10-02-virtual-com-lifecycle.md](verification/2026-10-02-virtual-com-lifecycle.md)。
+- 已通過：`virtual_com` 共 17 項行為測試；`remove`、`uninstall`、`install`、`create`、`test` 的完整生命週期實測，詳見 [2026-10-02-virtual-com-lifecycle.md](verification/2026-10-02-virtual-com-lifecycle.md)。Simulator 開啟時的自動檢查與自測，以及正式程式佔用埠時的 `busy` 提示，也已在畫面上確認。
 - 尚未實測：透過 Simulator 按鈕的 UAC 路徑與取消 UAC；有其他程式配對或驅動被擋時的實機情境。
 - 風險：Microsoft 正逐步取消對交叉簽章驅動的信任，2.2.2.0 之後可能被擋。

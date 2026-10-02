@@ -75,7 +75,7 @@ protocol validity as proof of correct sweep behavior.
   CENTER before stopping, and Apply waits for it.
 - [ ] Fixed Offset mode for commissioning the Roll sign and direction.
 - [ ] Warn when |Output Roll| exceeds an operator-set MBES stabilisation limit
-  (default 10°), and count those frames.
+  (default 15°, leaving Angle ±10° room for vessel roll), and count those frames.
 - [ ] Show the peak sweep rate 2π·Angle/Cycle; warn above an operator-set
   limit (default 10°/s).
 - [ ] Lock connection settings while connected.

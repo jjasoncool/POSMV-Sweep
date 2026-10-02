@@ -15,9 +15,8 @@ streams, and 1 for argument/I/O errors. Unlike replay, validation reports garbag
 outside frames instead of silently ignoring it. Error messages currently group
 field/status/range failures; detailed per-field diagnostics remain pending.
 Loop CLI currently requires a finite run: default 100 frames, or explicit count.
-Continuous until Stop, strict replay preflight, live monitor, OFF comparison and
-Simulator GTK4 controls remain pending. The GTK4 package installation attempt
-timed out; neither complete GUI is currently delivered.
+Sending until Stop, strict replay preflight, the live monitor and the OFF
+comparison are in the Simulator GUI (Level 2b), not in the CLI.
 
 From MSYS2 UCRT64 at the repository root:
 
@@ -63,8 +62,22 @@ Capture is receive-driven serial-to-file processing, not an independent-rate
 serial-to-serial proxy. Capture phase uses actual monotonic elapsed time. Serial
 write errors and zero-byte write timeouts fail the CLI; reads have a finite wait.
 This level passed on 2026-10-01 with com0com 2.2.2.0 pairs; see
-verification/2026-10-01-com0com-2.2.2.0.md. The full serial-to-serial proxy chain
-and full timing metrics are not yet verified end to end.
+verification/2026-10-01-com0com-2.2.2.0.md.
+
+## Level 2b: Simulator and Proxy GUIs
+
+1. Open the Simulator. It checks the test environment and self-tests the pairs.
+   The 測試 page shows ✔ with the com0com version, or the next step: 安裝 com0com
+   驅動 or 建立虛擬 COM 埠 (both through UAC). The rest of the environment
+   controls are on the 環境與進階 page.
+2. In the Proxy, choose the input and output COM the Simulator names, then 連線.
+3. In the Simulator, choose a data source and press 開始測試: RX opens first,
+   then TX. With the Heave tag on (環境與進階, default on), RX shows delay,
+   missing frames and the measured Offset.
+
+The self-test needs all four ports, so it reports a busy port while the Proxy
+is connected. Runs of this chain are recorded in verification/2026-10-02-*.md;
+sustained runs remain.
 
 ## Level 3
 
