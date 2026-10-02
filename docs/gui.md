@@ -36,6 +36,12 @@ minimum for 25 Hz; set it to match the POS MV and MBES ports. Serial settings ar
 8N1 without flow control, not a claim about actual POS MV settings. Baud is
 not checked against a rate: output follows the input.
 
+Left of the trend chart, a beam sketch shows a still ship and a red line at the
+current Offset angle from vertical, labelled in degrees. A positive Offset
+points right; the port/starboard side still needs commissioning. The line turns
+orange while the output Roll exceeds the MBES limit, and grey while nothing is
+sent.
+
 Each valid input frame is forwarded as soon as it arrives (adr/0001): unchanged
 with Sweep OFF, with only the Roll field rewritten when ON. Invalid input is
 dropped and counted. The GUI shows the forwarding delay, warns when |Output

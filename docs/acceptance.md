@@ -90,6 +90,8 @@ protocol validity as proof of correct sweep behavior.
 - [ ] Default configurable 500 ms stale timeout; suspend stale output and disable
   sweep; fresh input resumes output with sweep remaining OFF and no settling hold.
 - [ ] Real/offset/output values, ten-second trends, diagnostics and event log.
+- [ ] Beam sketch: a still ship and a line at the Offset angle with its value;
+  over-limit shown by colour.
 - [ ] Distinguish Current Rate from Average Rate and reset stats coherently.
 
 ## 4. Verification gates
