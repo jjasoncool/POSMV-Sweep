@@ -73,7 +73,7 @@ void connect_clicked(GtkButton*, gpointer data) {
 void scan_ports(GtkButton*, gpointer data) {
     auto* c = static_cast<Controller*>(data);
     if (c->engine.snapshot().connected) return;
-    posmv::refresh_ports(c->input); posmv::refresh_ports(c->output);
+    posmv::refresh_ports(c->input); posmv::refresh_ports(c->output); posmv::avoid_port_of(c->output, c->input);
 }
 std::string state_text(const posmv::ProxySnapshot& s) {
     switch (s.state) {
@@ -101,12 +101,17 @@ gboolean refresh(gpointer data) {
     auto* c = static_cast<Controller*>(data); const auto s = c->engine.snapshot();
     for (auto* widget : {c->input, c->output, c->scan, c->baud, c->timeout}) gtk_widget_set_sensitive(widget, !s.connected);
     gtk_button_set_label(GTK_BUTTON(c->connect), s.connected ? "中斷連線" : "連線");
+    // Foolproof: the same port for input and output, or no port at all, cannot be connected.
+    const auto conflict = s.connected ? std::string() : posmv::port_conflict(c->input, c->output);
+    gtk_widget_set_sensitive(c->connect, conflict.empty());
     if (s.connected) {
         c->syncing = true;
         gtk_check_button_set_active(GTK_CHECK_BUTTON(c->enable), s.sweep_enabled && !s.sweep_finishing);
         c->syncing = false;
     }
-    auto* state = g_markup_printf_escaped("<span foreground=\"%s\">●</span> %s", state_color(s.state), state_text(s).c_str());
+    auto* state = conflict.empty()
+        ? g_markup_printf_escaped("<span foreground=\"%s\">●</span> %s", state_color(s.state), state_text(s).c_str())
+        : g_markup_printf_escaped("<span foreground=\"#c25e00\">● %s</span>", conflict.c_str());
     gtk_label_set_markup(GTK_LABEL(c->state), state); g_free(state);
     const auto planned = settings(c);
     const bool sine = planned.mode == posmv::SweepMode::Sine;
@@ -178,6 +183,7 @@ void activate(GtkApplication* application, gpointer) {
     // Connection
     c->input = gtk_drop_down_new(nullptr, nullptr); posmv::refresh_ports(c->input); gtk_widget_set_hexpand(c->input, TRUE);
     c->output = gtk_drop_down_new(nullptr, nullptr); posmv::refresh_ports(c->output); gtk_widget_set_hexpand(c->output, TRUE);
+    posmv::avoid_port_of(c->output, c->input);
     c->scan = button("重新掃描 COM", G_CALLBACK(scan_ports));
     add(row({text("輸入 COM"), c->input, text("輸出 COM"), c->output, c->scan}));
     c->baud = number(1200, 4000000, 1200, 38400, 7);
