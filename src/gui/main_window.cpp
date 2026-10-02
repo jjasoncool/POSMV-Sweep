@@ -140,7 +140,7 @@ gboolean refresh(gpointer data) {
     const bool sending = s.state == posmv::ProxyState::Active && s.output_count;
     if (sending) c->chart.add(s.real, s.offset, s.output);
     else c->chart.break_line();
-    c->beam.update(s.offset, sending, sending && s.over_limit);
+    c->beam.update(s.real, s.output, limit, sending);
     std::ostringstream motion, diagnostics;
     motion << std::fixed << std::setprecision(2) << "<span size=\"x-large\">";
     if (s.state == posmv::ProxyState::Active)
@@ -227,7 +227,7 @@ void activate(GtkApplication* application, gpointer) {
     gtk_widget_set_tooltip_text(c->finish, "關閉 Sweep 或套用新設定時，Offset 沿正弦走到下一個 CENTER 才停止或切換");
     c->rate_info = gtk_label_new(""); gtk_widget_set_hexpand(c->rate_info, TRUE); gtk_label_set_xalign(GTK_LABEL(c->rate_info), 1);
     add(row({c->invert, c->finish, c->rate_info}));
-    c->limit = number(0.5, 90, 0.5, 15, 5);
+    c->limit = number(0.5, 90, 0.5, 10, 5);
     gtk_widget_set_tooltip_text(c->limit, "下游 MBES 能補償的最大 |Roll|，請依機型設定（例如 NORBIT ±10°；R2Sonic 約 ±(160° − sector)/2）。"
         "只用來警告，不會限制輸出");
     c->rate_limit = number(1, 360, 1, 20, 4);
