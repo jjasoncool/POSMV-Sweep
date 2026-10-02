@@ -1,6 +1,7 @@
 #include "protocol/tss1.hpp"
 #include "app/console.hpp"
 #include "motion/sweep.hpp"
+#include "scheduler/output_scheduler.hpp"
 #include "transport/serial_transport.hpp"
 #include <chrono>
 #include <array>
@@ -36,7 +37,7 @@ int main(int argc, char** argv) {
             const std::string arg = argv[i];
             if (arg == "--help") {
                 std::cout << "POSMV-Sweep\n--replay INPUT --output OUTPUT [--angle 10] [--cycle 4]\n"
-                             "[--rate 25|50|100] [--off] [--invert]\n"
+                             "[--rate 25|50|100|200] [--off] [--invert]\n"
                              "Serial capture: --input-port COM11 --output FILE [--baud 38400] [--seconds 10]\n"
                              "Offline timestamps assume one input frame per selected rate.\n";
                 return 0;
@@ -60,7 +61,7 @@ int main(int argc, char** argv) {
             else throw std::invalid_argument("Unknown option: " + arg);
         }
         config.validate();
-        if (rate != 25 && rate != 50 && rate != 100) throw std::invalid_argument("Rate must be 25, 50 or 100 Hz");
+        if (!posmv::supported_rate(rate)) throw std::invalid_argument("Rate must be 25, 50, 100 or 200 Hz");
         if (!input_port.empty()) {
             if (!input.empty() || output.empty() || seconds <= 0)
                 throw std::invalid_argument("Capture requires --output, positive --seconds, no --replay");

@@ -60,7 +60,7 @@ int main(int argc, char** argv) {
             if (i == 1 && arg == "send") continue;
             if (arg == "--help") {
                 std::cout << "posmv-simulator (--port COM10 | --output FILE) [--baud 38400]\n"
-                    "[--rate 25|50|100] [--count 100] [--replay FILE]\n"
+                    "[--rate 25|50|100|200] [--count 100] [--replay FILE]\n"
                     "[--roll 0] [--sine-roll] [--angle 10] [--cycle 4] [--unpaced]\n"
                     "Default: 100 zero-motion frames, 8N1, no flow control. Replay once to EOF.\n"
                     "--count limits replay if supplied. --unpaced is file-only.\n";
@@ -85,7 +85,7 @@ int main(int argc, char** argv) {
             else throw std::invalid_argument("Unknown option: " + arg);
         }
         if (port.empty() == output.empty()) throw std::invalid_argument("Select exactly one --port or --output");
-        if (rate != 25 && rate != 50 && rate != 100) throw std::invalid_argument("Rate must be 25, 50 or 100");
+        if (!posmv::supported_rate(rate)) throw std::invalid_argument("Rate must be 25, 50, 100 or 200");
         if (count == 0 || std::abs(fixed_roll) > 90) throw std::invalid_argument("Count must be positive; Roll must be +/-90");
         sweep.validate();
         if (loop && replay.empty()) throw std::invalid_argument("--loop requires --replay");

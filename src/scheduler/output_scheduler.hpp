@@ -3,12 +3,16 @@
 #include <chrono>
 #include <stdexcept>
 #include <algorithm>
+#include <iterator>
 namespace posmv {
+// TSS1 rates the tools send at; POS MV itself can send 1-200 Hz.
+inline constexpr unsigned supported_rates[] = {25, 50, 100, 200};
+inline bool supported_rate(double rate) { return std::ranges::find(supported_rates, rate) != std::end(supported_rates); }
 class OutputScheduler {
 public:
     using Clock = std::chrono::steady_clock;
     explicit OutputScheduler(unsigned rate) {
-        if (rate != 25 && rate != 50 && rate != 100) throw std::invalid_argument("Rate must be 25, 50 or 100");
+        if (!supported_rate(rate)) throw std::invalid_argument("Rate must be 25, 50, 100 or 200");
         period_ = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / rate));
         start_ = deadline_ = Clock::now();
     }

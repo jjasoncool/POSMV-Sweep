@@ -1,5 +1,7 @@
 #include "simulator/test_signal.hpp"
 #include "simulator/frame_pairing.hpp"
+#include "transport/serial_transport.hpp"
+#include "scheduler/output_scheduler.hpp"
 #include <cmath>
 #include <iostream>
 namespace {
@@ -108,6 +110,16 @@ int main() {
         const auto back = pairing.received(a, 6.01);
         check(back && near(back->latency_ms, 10, 1e-6) && pairing.missing() == 1,
             "a frame not back within 5 s is missing, so a later identical frame pairs with its own send");
+    }
+    // 27 bytes x 10 bits per frame: 6750, 13500, 27000 and 54000 bit/s; POS MV recommends 9600 at 25 Hz.
+    check(posmv::minimum_baud(25) == 9600 && posmv::minimum_baud(50) == 19200 && posmv::minimum_baud(100) == 38400 &&
+        posmv::minimum_baud(200) == 57600, "each rate gets the lowest standard baud that carries it");
+    {
+        bool accepted = true;
+        for (unsigned rate : {25u, 50u, 100u, 200u}) {
+            try { posmv::OutputScheduler scheduler(rate); } catch (const std::exception&) { accepted = false; }
+        }
+        check(accepted, "the Simulator can send at 25, 50, 100 and 200 Hz");
     }
     {
         posmv::TestSignal signal;

@@ -79,6 +79,24 @@ std::optional<std::string> chosen_port(GtkWidget* dropdown) {
     try { return posmv::selected_port(dropdown); } catch (const std::exception&) { return std::nullopt; }
 }
 bool running(const State* s) { return s->pending_start || s->tx_running || s->rx_running; }
+unsigned selected_rate(const State* s) {
+    const auto index=std::min<std::size_t>(gtk_drop_down_get_selected(GTK_DROP_DOWN(s->rate)),std::size(posmv::supported_rates)-1);
+    return posmv::supported_rates[index];
+}
+unsigned selected_baud(const State* s) {
+    auto* item=gtk_drop_down_get_selected_item(GTK_DROP_DOWN(s->baud));
+    return item ? static_cast<unsigned>(std::stoul(gtk_string_object_get_string(GTK_STRING_OBJECT(item)))) : posmv::minimum_baud(selected_rate(s));
+}
+// Foolproof baud: only standard bauds that carry the rate are offered, starting at the lowest.
+void rate_changed(GObject*, GParamSpec*, gpointer p) {
+    auto* s=static_cast<State*>(p);
+    const unsigned lowest=posmv::minimum_baud(selected_rate(s));
+    auto* model=gtk_string_list_new(nullptr);
+    for(const unsigned baud:posmv::standard_bauds) if(baud>=lowest) gtk_string_list_append(model,std::to_string(baud).c_str());
+    gtk_drop_down_set_model(GTK_DROP_DOWN(s->baud),G_LIST_MODEL(model));
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(s->baud),0);
+    g_object_unref(model);
+}
 void stop_tx(GtkButton*, gpointer p) { auto* s = static_cast<State*>(p); s->sender.request_stop(); if(s->sender.joinable()) s->sender.join(); s->message(true,"送出：已停止"); }
 void stop_rx(GtkButton*, gpointer p) { auto* s = static_cast<State*>(p); s->pending_start=false; s->receiver.request_stop(); if(s->receiver.joinable()) s->receiver.join(); s->rx_ready=false; }
 void start_tx(GtkButton*, gpointer p) {
@@ -89,8 +107,7 @@ void start_tx(GtkButton*, gpointer p) {
     const auto source = gtk_drop_down_get_selected(GTK_DROP_DOWN(s->source));
     const std::string path = source == Capture ? gtk_editable_get_text(GTK_EDITABLE(s->file)) : "";
     if(source == Capture && path.empty()) { s->message(true,"送出：請先選擇 Capture 檔"); return; }
-    const unsigned baud = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(s->baud));
-    const unsigned rates[] = {25,50,100}; const unsigned rate = rates[gtk_drop_down_get_selected(GTK_DROP_DOWN(s->rate))];
+    const unsigned baud = selected_baud(s), rate = selected_rate(s);
     // Generated Roll runs until Stop; a capture can also play once.
     const bool loop = source != Capture || gtk_check_button_get_active(GTK_CHECK_BUTTON(s->loop));
     posmv::TestSignal signal;
@@ -147,7 +164,7 @@ void start_rx(GtkButton*, gpointer p) {
     s->rx_ready=false; s->rx_failed=false;
     const auto port = chosen_port(s->rx);
     if(!port) { s->rx_failed=true; s->message(false,"接收：請先在「環境與進階」選擇 RX COM"); return; }
-    const unsigned baud = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(s->baud));
+    const unsigned baud = selected_baud(s);
     const bool compare = gtk_check_button_get_active(GTK_CHECK_BUTTON(s->off_check));
     if(compare && (gtk_drop_down_get_selected(GTK_DROP_DOWN(s->source)) != FixedRoll ||
         gtk_spin_button_get_value(GTK_SPIN_BUTTON(s->fixed_roll)) != 0)) {
@@ -322,7 +339,7 @@ gboolean refresh(gpointer p) {
     else if(s->pending_start && s->rx_ready) { s->pending_start=false; start_tx(nullptr,p); }
     std::string ports="測試環境就緒後，這裡會顯示正式程式要選的兩個埠";
     if(s->env.roles) {
-        const auto baud=std::to_string(gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(s->baud)));
+        const auto baud=std::to_string(selected_baud(s));
         auto* markup=g_markup_printf_escaped("<big><b>正式程式：「輸入 COM」選 %s，「輸出 COM」選 %s（%s bps）</b></big>",
             (*s->env.roles)[1].c_str(),(*s->env.roles)[2].c_str(),baud.c_str());
         ports=markup; g_free(markup);
@@ -434,8 +451,11 @@ GtkWidget* test_page(State* s) {
     gtk_stack_add_named(GTK_STACK(s->source_fields),row({s->file,choose_button,s->strict,s->loop}),"capture");
     g_signal_connect(s->source,"notify::selected",G_CALLBACK(source_changed),s);
     gtk_box_append(GTK_BOX(box),row({text("資料來源"),s->source,s->source_fields}));
-    const char* rates[]={"25 Hz","50 Hz","100 Hz",nullptr}; s->rate=gtk_drop_down_new_from_strings(rates);
-    s->baud=number(1200,4000000,1200,38400,7);
+    const char* rates[]={"25 Hz","50 Hz","100 Hz","200 Hz",nullptr}; s->rate=gtk_drop_down_new_from_strings(rates);
+    s->baud=gtk_drop_down_new(nullptr,nullptr);
+    gtk_widget_set_tooltip_text(s->baud,"依速率自動帶入最低可用的標準鮑率（每筆 27 bytes × 10 bits × 速率）；可以選更高，但不會低於這個值");
+    rate_changed(nullptr,nullptr,s);
+    g_signal_connect(s->rate,"notify::selected",G_CALLBACK(rate_changed),s);
     s->off_check=gtk_check_button_new_with_label("OFF 比對（固定 0°）");
     gtk_widget_set_tooltip_text(s->off_check,"正式程式 Sweep 關閉時，逐 byte 比對收到的 Frame；資料來源要設為固定 Roll 0°");
     s->run=gtk_button_new_with_label("開始測試"); gtk_widget_add_css_class(s->run,"suggested-action");
