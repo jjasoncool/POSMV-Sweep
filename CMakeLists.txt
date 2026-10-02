@@ -49,6 +49,9 @@ if(BUILD_TESTING)
   add_executable(test_signal tests/test_signal.cpp)
   target_link_libraries(test_signal PRIVATE posmv_core)
   add_test(NAME signal COMMAND test_signal)
+  add_executable(test_capture tests/test_capture.cpp)
+  target_link_libraries(test_capture PRIVATE posmv_core)
+  add_test(NAME capture COMMAND test_capture "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/20260904_TSS1 POSMV.txt")
   add_test(NAME replay COMMAND ${CMAKE_COMMAND}
     -DAPP=$<TARGET_FILE:posmv-sweep> -DFIXTURE=$<TARGET_FILE:test_core> -DBINARY=${CMAKE_CURRENT_BINARY_DIR}
     -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/replay.cmake)

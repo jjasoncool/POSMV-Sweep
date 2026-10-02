@@ -11,6 +11,11 @@ bool digits(std::string_view s) {
     for (char c : s) if (c < '0' || c > '9') return false;
     return true;
 }
+// The horizontal (XX) and vertical (AAAA) accelerations are hexadecimal, e.g. ":01001D".
+bool hex_digits(std::string_view s) {
+    for (char c : s) if ((c < '0' || c > '9') && (c < 'A' || c > 'F')) return false;
+    return true;
+}
 double value(std::string_view s) {
     int n = 0;
     for (char c : s.substr(1)) n = n * 10 + (c - '0');
@@ -18,7 +23,7 @@ double value(std::string_view s) {
 }
 std::optional<Tss1Frame> parse(std::string_view s) {
     if (s.size() != 25 || s[0] != ':' || s[7] != ' ' || s[19] != ' ' ||
-        !digits(s.substr(1, 6)) || std::string_view("UuGgHhFf").find(s[13]) == std::string_view::npos)
+        !hex_digits(s.substr(1, 6)) || std::string_view("UuGgHhFf").find(s[13]) == std::string_view::npos)
         return {};
     for (std::size_t p : {8u, 14u, 20u})
         if ((s[p] != ' ' && s[p] != '-') || !digits(s.substr(p + 1, 4))) return {};
