@@ -209,8 +209,9 @@ void activate(GtkApplication* application, gpointer) {
     c->limit = number(0.5, 90, 0.5, 15, 5);
     gtk_widget_set_tooltip_text(c->limit, "下游 MBES 能補償的最大 |Roll|，請依機型設定（例如 NORBIT ±10°；R2Sonic 約 ±(160° − sector)/2）。"
         "只用來警告，不會限制輸出");
-    c->rate_limit = number(1, 360, 1, 10, 4);
-    gtk_widget_set_tooltip_text(c->rate_limit, "Offset 變化速度的警告門檻；部分 MBES 會標記 Roll 變化太快的 ping（RESON 為 10°/s）");
+    c->rate_limit = number(1, 360, 1, 20, 4);
+    gtk_widget_set_tooltip_text(c->rate_limit, "Offset 變化速度的警告門檻；部分 MBES 會標記 Roll 變化太快的 ping。"
+        "下游是 RESON 時請改成 10°/s");
     add(row({text("MBES 穩定上限 ±"), c->limit, text("°　擺動速度上限"), c->rate_limit, text("°/s")}));
     c->engine.stabilisation_limit(gtk_spin_button_get_value(GTK_SPIN_BUTTON(c->limit)));
     g_signal_connect(c->enable, "toggled", G_CALLBACK(changed), c);

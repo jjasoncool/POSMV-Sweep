@@ -77,7 +77,7 @@ protocol validity as proof of correct sweep behavior.
 - [ ] Warn when |Output Roll| exceeds an operator-set MBES stabilisation limit
   (default 15°, leaving Angle ±10° room for vessel roll), and count those frames.
 - [ ] Show the peak sweep rate 2π·Angle/Cycle; warn above an operator-set
-  limit (default 10°/s).
+  limit (default 20°/s; RESON flags pings above 10°/s).
 - [ ] Lock connection settings while connected.
 - [ ] Default configurable 500 ms stale timeout; suspend stale output and disable
   sweep; fresh input resumes output with sweep remaining OFF and no settling hold.
