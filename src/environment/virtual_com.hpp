@@ -16,8 +16,10 @@ struct VirtualComMachine {
 };
 struct VirtualComOwnership { std::vector<VirtualPair> pairs; bool driver_installed_by_us{}; };
 struct PairRequest { std::string a, b; };
-// com0com keeps endpoint names under CNCA<id> and CNCB<id>.
-std::vector<VirtualPair> com0com_pairs(const std::map<std::string, std::string>& port_names);
+// com0com keeps endpoint names under CNCA<id> and CNCB<id>; a pair exists while its bus device
+// (whose PortNum is the id) exists, even if the driver failed to load.
+std::vector<VirtualPair> com0com_pairs(const std::map<std::string, std::string>& port_names,
+    const std::vector<unsigned>& bus_ids);
 // Pairs to install so that two Owned Pairs exist; never reuses a reserved or present COM number.
 std::vector<PairRequest> plan_create(const VirtualComMachine& machine, const VirtualComOwnership& ownership);
 // Ids of Owned Pairs present on the machine; Foreign Pairs are never included.

@@ -37,20 +37,17 @@ void require_consistent(const VirtualComMachine& machine, const VirtualComOwners
                     "（本程式記錄為 " + owned.a + "/" + owned.b + "），為避免動到別人的配對，不做任何變更");
 }
 }
-std::vector<VirtualPair> com0com_pairs(const std::map<std::string, std::string>& port_names) {
-    std::map<unsigned, VirtualPair> pairs;
-    for (const auto& [key, port] : port_names) {
-        if (key.size() < 5 || key.compare(0, 3, "CNC") != 0 || (key[3] != 'A' && key[3] != 'B')) continue;
-        unsigned id{};
-        const auto [end, error] = std::from_chars(key.data() + 4, key.data() + key.size(), id);
-        if (error != std::errc{} || end != key.data() + key.size()) continue;
-        auto& pair = pairs[id];
-        pair.id = id;
-        (key[3] == 'A' ? pair.a : pair.b) = port;
-    }
-    std::vector<VirtualPair> result;
-    for (auto& [id, pair] : pairs) result.push_back(std::move(pair));
-    return result;
+std::vector<VirtualPair> com0com_pairs(const std::map<std::string, std::string>& port_names,
+    const std::vector<unsigned>& bus_ids) {
+    // Without a PortName parameter com0com names the endpoint after its key.
+    const auto endpoint = [&](const std::string& key) {
+        const auto found = port_names.find(key);
+        return found == port_names.end() ? key : found->second;
+    };
+    std::vector<VirtualPair> pairs;
+    for (const auto id : std::set<unsigned>(bus_ids.begin(), bus_ids.end()))
+        pairs.push_back({id, endpoint("CNCA" + std::to_string(id)), endpoint("CNCB" + std::to_string(id))});
+    return pairs;
 }
 std::vector<PairRequest> plan_create(const VirtualComMachine& machine, const VirtualComOwnership& ownership) {
     if (!machine.driver_installed) throw std::runtime_error("尚未安裝 com0com 驅動，無法建立配對");

@@ -28,10 +28,17 @@ posmv::VirtualComOwnership owned_environment() {
 int main() {
     {
         const auto pairs = posmv::com0com_pairs({{"CNCA0", "COM10"}, {"CNCB0", "COM11"},
-            {"CNCA1", "COM12"}, {"CNCB1", "COM13"}, {"ComDB", "ignored"}});
+            {"CNCA1", "COM12"}, {"CNCB1", "COM13"}, {"ComDB", "ignored"}}, {0, 1});
         check(pairs.size() == 2 && pairs[0].id == 0 && pairs[0].a == "COM10" && pairs[0].b == "COM11" &&
             pairs[1].id == 1 && pairs[1].a == "COM12" && pairs[1].b == "COM13",
             "com0com endpoint parameters become Virtual Pairs");
+    }
+    {
+        // setupc remove deletes the pair's devices but leaves its endpoint parameters behind.
+        const auto pairs = posmv::com0com_pairs({{"CNCA0", "COM10"}, {"CNCB0", "COM11"},
+            {"CNCA1", "COM12"}, {"CNCB1", "COM13"}}, {1});
+        check(pairs.size() == 1 && pairs[0].id == 1 && pairs[0].a == "COM12" && pairs[0].b == "COM13",
+            "parameters left by a removed pair are not a Virtual Pair");
     }
     {
         const auto plan = posmv::plan_create(machine_with_driver(), {});

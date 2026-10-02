@@ -3,6 +3,7 @@
 #include "transport/serial_transport.hpp"
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -20,6 +21,7 @@
 #endif
 #include <windows.h>
 #include <bcrypt.h>
+#include <setupapi.h>
 #include <shellapi.h>
 namespace posmv {
 namespace {
@@ -109,6 +111,23 @@ std::string driver_version(const fs::path& directory) {
         }
     return "未知";
 }
+// Driver store copies (%windir%\INF\oem*.inf) of com0com's own INF: its device class and provider.
+std::vector<fs::path> com0com_driver_store_infs() {
+    std::vector<fs::path> infs;
+    std::wstring windows(MAX_PATH, L'\0');
+    windows.resize(GetWindowsDirectoryW(windows.data(), MAX_PATH));
+    std::error_code error;
+    for (const auto& entry : fs::directory_iterator(fs::path(windows) / L"INF", error)) {
+        const auto name = entry.path().filename().wstring();
+        if (!name.starts_with(L"oem") || !entry.path().extension().wstring().ends_with(L"inf")) continue;
+        std::string text;
+        try { text = read_text(entry.path()); } catch (const std::exception&) { continue; }
+        std::ranges::transform(text, text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (text.find("{df799e12-3c56-421b-b298-b6d3642bc878}") != std::string::npos &&
+            text.find("vyacheslav frolov") != std::string::npos) infs.push_back(entry.path());
+    }
+    return infs;
+}
 bool driver_service_registered() {
     return RegistryKey(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Services\\com0com").get() != nullptr;
 }
@@ -127,6 +146,24 @@ std::map<std::string, std::string> com0com_port_names() {
         names[utf8(key)] = utf8(named ? port : key);
     }
     return names;
+}
+// Bus devices (ROOT\CNCPORTS for 2.x, ROOT\COM0COM for 3.x) store their pair number as PortNum.
+std::vector<unsigned> com0com_bus_ids() {
+    std::vector<unsigned> ids;
+    for (const auto* enumerator : {L"SYSTEM\\CurrentControlSet\\Enum\\ROOT\\CNCPORTS", L"SYSTEM\\CurrentControlSet\\Enum\\ROOT\\COM0COM"}) {
+        RegistryKey buses(HKEY_LOCAL_MACHINE, enumerator);
+        if (!buses.get()) continue;
+        for (DWORD index = 0;; ++index) {
+            wchar_t instance[256];
+            DWORD length = 256;
+            if (RegEnumKeyExW(buses.get(), index, instance, &length, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS) break;
+            const auto parameters = std::wstring(instance) + L"\\Device Parameters";
+            DWORD id{}, size = sizeof(id);
+            if (RegGetValueW(buses.get(), parameters.c_str(), L"PortNum", RRF_RT_REG_DWORD, nullptr, &id, &size) == ERROR_SUCCESS)
+                ids.push_back(id);
+        }
+    }
+    return ids;
 }
 std::vector<std::uint8_t> com_db() {
     const auto* path = L"SYSTEM\\CurrentControlSet\\Control\\COM Name Arbiter";
@@ -153,7 +190,7 @@ std::vector<std::string> active_ports() {
     return ports;
 }
 VirtualComMachine read_machine() {
-    return {setup_directory().has_value(), com0com_pairs(com0com_port_names()), com_db(), active_ports()};
+    return {setup_directory().has_value(), com0com_pairs(com0com_port_names(), com0com_bus_ids()), com_db(), active_ports()};
 }
 
 // --- Ownership (machine-wide; written only by elevated actions) ----------------------------
@@ -414,6 +451,13 @@ void uninstall(Report& report, const fs::path& legacy) {
         return;
     }
     for (const auto id : plan.remove_first) setupc(*directory, L"remove " + std::to_wstring(id));
+    // The 2.2.2.0 uninstaller deletes its oem*.inf copy directly and orphans the driver store
+    // package, so release the package first, while Windows can still find it (fails if in use).
+    for (const auto& inf : com0com_driver_store_infs()) {
+        const auto name = utf8(inf.filename().wstring());
+        if (SetupUninstallOEMInfW(inf.filename().c_str(), 0, nullptr)) report.say("已從 Windows 驅動程式庫移除 " + name);
+        else report.say("無法從 Windows 驅動程式庫移除 " + name + "：" + error_text(GetLastError()));
+    }
     // Run the NSIS uninstaller in place (_?=) so we can wait for it.
     const auto result = run(*directory / L"uninstall.exe", L"/S _?=" + directory->wstring(), *directory, std::chrono::minutes(3), false);
     if (result.exit_code != 0) throw std::runtime_error("com0com 解除安裝程式失敗（exit " + std::to_string(result.exit_code) + "）");
