@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -20,6 +21,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include "platform/windows/win32_error.hpp"
 #include <bcrypt.h>
 #include <setupapi.h>
 #include <shellapi.h>
@@ -38,8 +40,12 @@ struct Report {
     bool ok = true;
     std::vector<std::string> messages;
     std::optional<EnvironmentRoles> roles;
+    std::optional<std::string> driver;  // installed com0com version
+    std::string test;                   // self-test outcome: passed, busy or failed
     void say(std::string text) { messages.push_back(std::move(text)); }
 };
+// Thrown when another program, usually a connected Proxy, holds a port the self-test needs.
+struct PortBusy : std::runtime_error { using std::runtime_error::runtime_error; };
 
 std::string utf8(std::wstring_view text) {
     if (text.empty()) return {};
@@ -55,9 +61,7 @@ std::wstring wide(std::string_view text) {
     MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), result.data(), size);
     return result;
 }
-std::string error_text(DWORD code) {
-    return std::system_category().message(static_cast<int>(code)) + " (" + std::to_string(code) + ")";
-}
+std::string error_text(DWORD code) { return win32_message(code); }
 fs::path environment_path(const wchar_t* name) {
     std::wstring value(32767, L'\0');
     const DWORD length = GetEnvironmentVariableW(name, value.data(), static_cast<DWORD>(value.size()));
@@ -77,8 +81,10 @@ void write_text_atomically(const fs::path& file, const std::string& text) {
         output << text;
         if (!output.flush()) throw std::runtime_error("無法寫入 " + utf8(temporary.wstring()));
     }
-    if (!MoveFileExW(temporary.c_str(), file.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-        throw std::runtime_error("無法更新 " + utf8(file.wstring()) + "：" + error_text(GetLastError()));
+    if (!MoveFileExW(temporary.c_str(), file.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        const DWORD error = GetLastError();  // building the message below could overwrite it
+        throw std::runtime_error("無法更新 " + utf8(file.wstring()) + "：" + error_text(error));
+    }
 }
 
 // --- Machine state (readable without elevation) -------------------------------------------
@@ -228,7 +234,10 @@ ProcessResult run(const fs::path& program, const std::wstring& arguments, const 
     SECURITY_ATTRIBUTES inherit{sizeof(inherit), nullptr, TRUE};
     HANDLE read_end{}, write_end{};
     if (capture) {
-        if (!CreatePipe(&read_end, &write_end, &inherit, 0)) throw std::runtime_error("CreatePipe：" + error_text(GetLastError()));
+        if (!CreatePipe(&read_end, &write_end, &inherit, 0)) {
+            const DWORD error = GetLastError();
+            throw std::runtime_error("CreatePipe：" + error_text(error));
+        }
         SetHandleInformation(read_end, HANDLE_FLAG_INHERIT, 0);
     }
     STARTUPINFOW startup{};
@@ -360,7 +369,7 @@ void describe(Report& report, const VirtualComMachine& machine, const VirtualCom
         if (!owned) report.say("其他程式的配對 " + pair_text(pair) + "：本程式不會變更");
     }
     report.roles = environment_roles(machine, ownership);
-    if (!report.roles && machine.driver_installed) report.say("測試環境尚未就緒：請按「建立兩組測試配對」");
+    if (!report.roles && machine.driver_installed) report.say("測試環境尚未就緒：請按「建立虛擬 COM 埠」");
 }
 void inspect(Report& report, const fs::path& legacy) {
     describe(report, read_machine(), load_ownership(legacy));
@@ -456,7 +465,10 @@ void uninstall(Report& report, const fs::path& legacy) {
     for (const auto& inf : com0com_driver_store_infs()) {
         const auto name = utf8(inf.filename().wstring());
         if (SetupUninstallOEMInfW(inf.filename().c_str(), 0, nullptr)) report.say("已從 Windows 驅動程式庫移除 " + name);
-        else report.say("無法從 Windows 驅動程式庫移除 " + name + "：" + error_text(GetLastError()));
+        else {
+            const DWORD error = GetLastError();
+            report.say("無法從 Windows 驅動程式庫移除 " + name + "：" + error_text(error));
+        }
     }
     // Run the NSIS uninstaller in place (_?=) so we can wait for it.
     const auto result = run(*directory / L"uninstall.exe", L"/S _?=" + directory->wstring(), *directory, std::chrono::minutes(3), false);
@@ -469,15 +481,23 @@ void uninstall(Report& report, const fs::path& legacy) {
         ? "已移除 com0com 程式檔，但驅動服務仍在：請重新開機完成移除"
         : "已解除安裝 com0com");
 }
+std::unique_ptr<SerialTransport> open_for_test(const std::string& port) {
+    try { return std::make_unique<SerialTransport>(port, 38400); }
+    catch (const std::system_error& e) {
+        if (e.code().value() != ERROR_ACCESS_DENIED) throw;
+        throw PortBusy("無法自測：" + port + " 正被其他程式使用（例如正式程式已連線），中斷連線後再自測");
+    }
+}
 double exchange(const std::string& from, const std::string& to) {
-    SerialTransport sender(from, 38400), receiver(to, 38400);
+    const auto sender = open_for_test(from);
+    const auto receiver = open_for_test(to);
     std::array<char, 256> buffer{};
-    while (receiver.read(buffer) > 0) {}
+    while (receiver->read(buffer) > 0) {}
     const auto start = std::chrono::steady_clock::now();
-    sender.write(test_frame);
+    sender->write(test_frame);
     std::string received;
     while (received.size() < sizeof(test_frame) - 1 && std::chrono::steady_clock::now() - start < std::chrono::seconds(2))
-        received.append(buffer.data(), receiver.read(buffer));
+        received.append(buffer.data(), receiver->read(buffer));
     if (received != test_frame)
         throw std::runtime_error(from + "→" + to + "：收到的資料不符（" + std::to_string(received.size()) + " bytes）");
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
@@ -490,22 +510,33 @@ void self_test(Report& report, const fs::path& legacy) {
         describe(report, machine, ownership);
         throw std::runtime_error("測試環境尚未就緒，無法自測");
     }
+    report.roles = roles;  // the pairs exist even if the test below fails
     const std::pair<std::string, std::string> links[] = {
         {roles->tx, roles->input}, {roles->input, roles->tx}, {roles->output, roles->rx}, {roles->rx, roles->output}};
-    for (const auto& [from, to] : links) {
-        std::ostringstream line;
-        line.precision(1);
-        line << std::fixed << from << "→" << to << "：通過（" << exchange(from, to) << " ms）";
-        report.say(line.str());
+    try {
+        for (const auto& [from, to] : links) {
+            std::ostringstream line;
+            line.precision(1);
+            line << std::fixed << from << "→" << to << "：通過（" << exchange(from, to) << " ms）";
+            report.say(line.str());
+        }
+    } catch (const PortBusy&) {
+        report.test = "busy";
+        throw;
+    } catch (...) {
+        report.test = "failed";
+        throw;
     }
+    report.test = "passed";
     report.say("雙向自測通過（38400 bps，8N1）");
-    report.roles = roles;
 }
 void write_report(const fs::path& file, const Report& report) {
     std::string text = std::string("status=") + (report.ok ? "ok" : "error") + "\n";
     for (const auto& message : report.messages) text += "message=" + message + "\n";
     if (report.roles)
         text += "roles=" + report.roles->tx + " " + report.roles->input + " " + report.roles->output + " " + report.roles->rx + "\n";
+    if (report.driver) text += "driver=" + *report.driver + "\n";
+    if (!report.test.empty()) text += "test=" + report.test + "\n";
     fs::create_directories(file.parent_path());
     write_text_atomically(file, text);
 }
@@ -538,6 +569,10 @@ int run_virtual_com_worker() {
         report.ok = false;
         report.say(e.what());
     }
+    // Every report states the driver, so the Simulator can show it after any action.
+    try {
+        if (const auto directory = setup_directory()) report.driver = driver_version(*directory);
+    } catch (const std::exception&) {}
     try { write_report(result, report); } catch (...) { return 3; }
     return report.ok ? 0 : 1;
 }
