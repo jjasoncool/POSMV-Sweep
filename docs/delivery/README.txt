@@ -54,7 +54,7 @@ POSMV-Sweep 使用說明
 三、授權
 --------
 
-  LICENSE.txt              本程式的授權
+  LICENSE.txt              本程式的授權（MIT）
   THIRD-PARTY-NOTICES.txt  所附開放原始碼元件的清單、授權與原始碼位置
   licenses\                各元件的授權全文
   drivers\source\          com0com 的官方原始碼

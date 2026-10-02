@@ -19,7 +19,7 @@ The preset sets the MSYS2 PATH itself. It configures a Release build in
 | `posmv-sweep.exe`, `posmv-simulator.exe` | Release build, no console window |
 | `*.dll` | Recursive import scan of both programs, from the MSYS2 UCRT64 bin directory only (`cmake/DeployRuntime.cmake`) |
 | `README.txt` | `docs/delivery/README.txt`, the user guide in Traditional Chinese |
-| `LICENSE.txt` | Repository `LICENSE`. **Missing until the project license is chosen**; configure warns |
+| `LICENSE.txt` | Repository `LICENSE` (MIT) |
 | `THIRD-PARTY-NOTICES.txt`, `licenses/` | `cmake/ThirdPartyNotices.cmake` |
 | `drivers/`, `licenses/com0com/` | `cmake/Com0com.cmake`; turn off with `-DPOSMV_BUNDLE_COM0COM=OFF` |
 | `BUILD-INFO.txt` | Version, git commit, date and build type |
