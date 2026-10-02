@@ -18,10 +18,13 @@ has been performed. Terms are defined in [GLOSSARY.md](GLOSSARY.md).
 Details: [docs/gui.md](docs/gui.md), [docs/testing.md](docs/testing.md),
 [docs/virtual-com-status.md](docs/virtual-com-status.md),
 [docs/protocol.md](docs/protocol.md), [docs/architecture.md](docs/architecture.md).
+Requirements and decisions: [docs/acceptance.md](docs/acceptance.md),
+[docs/adr/](docs/adr/); test records: [docs/verification/](docs/verification/).
 
 ## Platform
 
-- Windows 10/11 x64 only. C++20, CMake ≥ 3.20, Ninja, MSYS2 UCRT64 GCC, GTK4.
+- Windows 10/11 x64 only. C++20, CMake ≥ 3.20 (≥ 3.25 for the packaging
+  workflow), Ninja, MSYS2 UCRT64 GCC, GTK4.
 - Linux is **not supported yet**: CMake stops with a fatal error on non-Windows
   hosts. Shared code (protocol, sweep, validation) is platform-neutral, but the
   serial, clock and virtual COM backends exist only for Windows. See
@@ -40,6 +43,22 @@ ctest --test-dir build --output-on-failure
 - After linking, the required UCRT64/GTK DLLs are copied beside both
   executables, so they start from Explorer without MSYS2 on `PATH`.
 - Never mix MINGW64 libraries with the UCRT64 compiler.
+
+## Package for delivery
+
+```sh
+cmake --workflow --preset package
+```
+
+This produces `build-release/POSMV-Sweep-<version>-win64.zip`: both programs,
+their DLLs, a Traditional Chinese user guide, third-party notices and licenses,
+and the pinned com0com 2.2.2.0 installer with its source. It downloads the
+com0com files on first use. See [docs/packaging.md](docs/packaging.md).
+
+## License
+
+MIT, see [LICENSE](LICENSE). Bundled third-party components keep their own
+licenses, listed in the package's `THIRD-PARTY-NOTICES.txt`.
 
 ## Offline replay
 
