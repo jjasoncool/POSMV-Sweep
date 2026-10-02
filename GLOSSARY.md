@@ -1,6 +1,6 @@
 # POSMV-Sweep
 
-在 POS MV 與下游 MBES 之間轉送 TSS1 姿態資料的串列 Proxy，可在 Roll 上疊加週期性的 Offset，讓 MBES 的波束左右擺動；另有 Simulator 作為獨立的測試控制台。
+在 POS MV 與下游 MBES 之間轉送 TSS1 姿態資料的串列 Proxy，可在 Roll 上疊加週期性的 Offset，讓 MBES 的波束左右擺動，從不同角度掃描海底管線以建立模型；另有 Simulator 作為獨立的測試控制台。最終成果以 POS MV 自己記錄的真實姿態處理。
 
 ## Language
 
