@@ -9,7 +9,7 @@
 #include "platform/environment_manager.hpp"
 #include "simulator/replay_source.hpp"
 #include "simulator/test_signal.hpp"
-#include "simulator/tag_tracker.hpp"
+#include "simulator/frame_pairing.hpp"
 #include "gui/port_selector.hpp"
 #include <algorithm>
 #include <array>
@@ -40,9 +40,9 @@ struct State {
     // 環境與進階 page
     GtkWidget *details, *tx, *rx, *tag_check;
     std::vector<GtkWidget*> environment_buttons, locked_while_running;
-    // Tagged frames: TX records what it sent, RX pairs what came back (shared clock below).
-    std::mutex tag_mutex;
-    posmv::TagTracker tags;
+    // TX records every frame it sends; RX pairs what comes back (shared clock below).
+    std::mutex pairing_mutex;
+    posmv::FramePairing pairing;
     const std::chrono::steady_clock::time_point epoch = std::chrono::steady_clock::now();
     double since_epoch() const { return std::chrono::duration<double>(std::chrono::steady_clock::now() - epoch).count(); }
     posmv::EnvironmentManager manager;
@@ -126,12 +126,13 @@ void start_tx(GtkButton*, gpointer p) {
                     if(token.stop_requested()) break;
                     clock.wait(); if(token.stop_requested()) break;
                     std::string packet=frame.raw+"\r\n";
+                    auto sent=frame;
                     if(path.empty()) {
                         packet=posmv::test_frame(signal,std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count(),count);
-                        if(signal.tag) {  // record before writing so a fast return can still pair
-                            const auto sent=posmv::Tss1Parser().feed(packet).at(0);
-                            std::lock_guard lock(s->tag_mutex); s->tags.sent(count,s->since_epoch(),sent.roll_deg);
-                        }
+                        sent=posmv::Tss1Parser().feed(packet).at(0);
+                    }
+                    {  // record before writing so a fast return can still pair
+                        std::lock_guard lock(s->pairing_mutex); s->pairing.sent(sent,s->since_epoch());
                     }
                     transport.write(packet); ++count;
                     s->message(true,preflight+"送出中：已送出 "+std::to_string(count)+" 筆\n最新："+packet.substr(0,packet.size()-2));
@@ -154,10 +155,9 @@ void start_rx(GtkButton*, gpointer p) {
         s->message(false,"OFF 比對只支援固定 Roll 0.00°：請把資料來源設為固定 Roll，Roll 填 0");
         return;
     }
-    const bool tagged=gtk_check_button_get_active(GTK_CHECK_BUTTON(s->tag_check)) && !compare;
-    { std::lock_guard lock(s->tag_mutex); s->tags=posmv::TagTracker{}; }
+    { std::lock_guard lock(s->pairing_mutex); s->pairing=posmv::FramePairing{}; }
     s->rx_running = true;
-    s->receiver = std::jthread([s,port=*port,baud,compare,tagged](std::stop_token token) {
+    s->receiver = std::jthread([s,port=*port,baud,compare](std::stop_token token) {
         RunningFlag running{s->rx_running};
         try {
             posmv::SerialTransport transport(port,baud); s->rx_ready=true; posmv::StreamValidator validator;
@@ -173,9 +173,9 @@ void start_rx(GtkButton*, gpointer p) {
                 const double received_at=s->since_epoch();
                 for(const auto& frame:frames) {
                     timing.observe(seconds);
-                    if(tagged) {
-                        std::lock_guard lock(s->tag_mutex);
-                        if(const auto pairing=s->tags.received(posmv::heave_tag(frame),received_at,frame.roll_deg)) offset_now=pairing->offset_deg;
+                    {
+                        std::lock_guard lock(s->pairing_mutex);
+                        if(const auto pair=s->pairing.received(frame,received_at)) offset_now=pair->offset_deg;
                     }
                     std::ostringstream motion; motion<<std::fixed<<std::setprecision(2)
                         <<"最新："<<frame.raw<<"\nRoll "<<frame.roll_deg<<"°　Pitch "<<frame.pitch_deg<<"°　Heave "<<frame.heave_m<<" m";
@@ -186,16 +186,21 @@ void start_rx(GtkButton*, gpointer p) {
                     <<"接收中：有效 "<<validator.valid<<"　無效 "<<validator.invalid<<"　垃圾 "<<validator.garbage_bytes<<" bytes\n"
                     <<"速率：即時 "<<timing.current_rate(seconds)<<" Hz／平均 "<<timing.average_rate()<<" Hz　中斷 "<<timing.gaps()<<" 次\n"
                     <<"接收間隔（ms）：平均 "<<intervals.mean_ms<<"　最小 "<<intervals.min_ms<<"　最大 "<<intervals.max_ms<<"　p99 "<<intervals.p99_ms<<"\n";
-                if(tagged) {
-                    std::lock_guard lock(s->tag_mutex);
-                    const auto delay=s->tags.latency(); const auto shape=s->tags.offset_estimate();
-                    text<<"延遲（送出→收到，ms）：平均 "<<delay.mean_ms<<"　最大 "<<delay.max_ms<<"　p99 "<<delay.p99_ms
-                        <<"　遺漏 "<<s->tags.missing()<<" 筆\n"<<std::setprecision(2);
-                    if(shape && !shape->period_seconds && shape->amplitude_deg<0.05) text<<"量到的 Offset：固定 "<<shape->center_deg<<"°\n";
+                {
+                    std::lock_guard lock(s->pairing_mutex);
+                    const auto& pairing=s->pairing;
+                    text<<"比對：對上 "<<pairing.paired()<<"　相同 "<<pairing.identical()<<"　遺漏 "<<pairing.missing()
+                        <<"　對不上 "<<pairing.unmatched()<<"\n";
+                    const auto delay=pairing.latency(); const auto shape=pairing.offset_estimate();
+                    if(pairing.paired()) text<<"延遲（送出→收到，ms）：平均 "<<delay.mean_ms<<"　最大 "<<delay.max_ms<<"　p99 "<<delay.p99_ms<<"\n";
+                    text<<std::setprecision(2);
+                    // Below the 0.01° resolution a centre prints as 0.00, never -0.00.
+                    const auto centre=shape && std::abs(shape->center_deg)>=0.005 ? shape->center_deg : 0.0;
+                    if(shape && !shape->period_seconds && shape->amplitude_deg<0.05) text<<"量到的 Offset：固定 "<<centre<<"°\n";
                     else if(shape) {
                         text<<"量到的 Offset：目前 "<<offset_now<<"°　幅度 ±"<<shape->amplitude_deg<<"°　週期 ";
                         if(shape->period_seconds) text<<*shape->period_seconds<<" 秒"; else text<<"—";
-                        text<<"　中心 "<<shape->center_deg<<"°\n";
+                        text<<"　中心 "<<centre<<"°\n";
                     }
                 }
                 text<<latest<<(validator.last_error.empty()?"":"\n"+validator.last_error);
@@ -207,7 +212,12 @@ void start_rx(GtkButton*, gpointer p) {
         } catch(const std::exception& e) { s->rx_failed=true; s->rx_ready=false; s->message(false,"接收錯誤："+std::string(e.what())); }
     });
 }
-void start_test(GtkButton*, gpointer p) { stop_tx(nullptr,p); start_rx(nullptr,p); static_cast<State*>(p)->pending_start=true; }
+void start_test(GtkButton*, gpointer p) {
+    auto* s=static_cast<State*>(p);
+    const auto tx=chosen_port(s->tx), rx=chosen_port(s->rx);
+    if(tx && rx && *tx==*rx) { s->message(false,"TX 與 RX 不能是同一個 COM：請到「環境與進階」修改"); return; }
+    stop_tx(nullptr,p); start_rx(nullptr,p); s->pending_start=true;
+}
 void stop_test(GtkButton*, gpointer p) { static_cast<State*>(p)->pending_start=false; stop_tx(nullptr,p); stop_rx(nullptr,p); }
 // One button: RX opens first and TX starts once it is ready (see refresh).
 void run_clicked(GtkButton*, gpointer p) { if(running(static_cast<State*>(p))) stop_test(nullptr,p); else start_test(nullptr,p); }
@@ -436,7 +446,8 @@ GtkWidget* test_page(State* s) {
     gtk_box_append(GTK_BOX(box),gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
     auto* views=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,24); gtk_box_set_homogeneous(GTK_BOX(views),TRUE);
     s->tx_view=status_label("送出：已停止"); s->rx_view=status_label("接收：已停止");
-    gtk_widget_set_tooltip_text(s->rx_view,"一次讀到多筆 Frame 時，間隔記為 0");
+    gtk_widget_set_tooltip_text(s->rx_view,"比對：以 Roll 以外的內容，把收到的 Frame 對回送出的那一筆。相同：與送出的逐 byte 相同，正式程式 Sweep 關閉時應等於對上的筆數；"
+        "遺漏：送出後沒有收到；對不上：收到的 Frame 不是本程式送出的。一次讀到多筆 Frame 時，間隔記為 0");
     gtk_box_append(GTK_BOX(views),s->tx_view); gtk_box_append(GTK_BOX(views),s->rx_view);
     gtk_box_append(GTK_BOX(box),fixed_area(views,200));
     return box;
@@ -451,7 +462,7 @@ GtkWidget* advanced_page(State* s) {
     gtk_box_append(GTK_BOX(box),gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
     gtk_box_append(GTK_BOX(box),heading("Simulator 使用的埠（依測試環境自動選好）"));
     s->tx=gtk_drop_down_new(nullptr,nullptr); posmv::refresh_ports(s->tx);
-    s->rx=gtk_drop_down_new(nullptr,nullptr); posmv::refresh_ports(s->rx);
+    s->rx=gtk_drop_down_new(nullptr,nullptr); posmv::refresh_ports(s->rx); posmv::avoid_port_of(s->rx,s->tx);
     auto* rescan_button=gtk_button_new_with_label("重新掃描 COM"); g_signal_connect(rescan_button,"clicked",G_CALLBACK(rescan),s);
     gtk_box_append(GTK_BOX(box),row({text("TX（送往正式程式）"),s->tx,text("RX（接收正式程式輸出）"),s->rx,rescan_button}));
     gtk_box_append(GTK_BOX(box),gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
@@ -463,7 +474,7 @@ GtkWidget* advanced_page(State* s) {
         auto* b=gtk_button_new_with_label(title); g_signal_connect(b,"clicked",callback,s); gtk_box_append(GTK_BOX(controls),b);
     }
     gtk_box_append(GTK_BOX(box),controls);
-    s->tag_check=gtk_check_button_new_with_label("在 Heave 寫入序號，量測延遲與實際 Offset（OFF 比對時自動關閉）");
+    s->tag_check=gtk_check_button_new_with_label("固定／正弦 Roll 在 Heave 寫入序號，讓每筆 Frame 都不同，遺漏筆數更準（OFF 比對時自動關閉）");
     gtk_check_button_set_active(GTK_CHECK_BUTTON(s->tag_check),TRUE); gtk_box_append(GTK_BOX(box),s->tag_check);
     for(auto* widget:{s->tx,s->rx,s->tag_check}) s->locked_while_running.push_back(widget);
     return box;
