@@ -1,6 +1,7 @@
 #include <gtk/gtk.h>
 #include "gui/port_selector.hpp"
 #include "gui/roll_chart.hpp"
+#include "gui/beam_view.hpp"
 #include "app/proxy_engine.hpp"
 #include <algorithm>
 #include <iterator>
@@ -10,6 +11,7 @@ namespace {
 struct Controller {
     posmv::ProxyEngine engine;
     posmv::RollChart chart;
+    posmv::BeamView beam;
     GtkWidget *input, *output, *scan, *baud, *timeout, *connect, *state;
     GtkWidget *enable, *mode, *mode_fields, *angle, *cycle, *fixed_offset, *invert, *finish, *rate_info;
     GtkWidget *limit, *rate_limit, *notice, *warning, *motion, *diagnostics;
@@ -135,8 +137,10 @@ gboolean refresh(gpointer data) {
     const std::string markup = std::string("<span foreground=\"#c25e00\">") + escaped + "</span>";
     g_free(escaped);
     gtk_label_set_markup(GTK_LABEL(c->warning), markup.c_str());
-    if (s.state == posmv::ProxyState::Active && s.output_count) c->chart.add(s.real, s.offset, s.output);
+    const bool sending = s.state == posmv::ProxyState::Active && s.output_count;
+    if (sending) c->chart.add(s.real, s.offset, s.output);
     else c->chart.break_line();
+    c->beam.update(s.offset, sending, sending && s.over_limit);
     std::ostringstream motion, diagnostics;
     motion << std::fixed << std::setprecision(2) << "<span size=\"x-large\">";
     if (s.state == posmv::ProxyState::Active)
@@ -250,11 +254,16 @@ void activate(GtkApplication* application, gpointer) {
     auto* development = add(gtk_label_new(nullptr));
     gtk_label_set_markup(GTK_LABEL(development), "<small>開發版：實體 Roll 方向尚未驗證，現場請先用固定 Offset 確認</small>");
     gtk_label_set_xalign(GTK_LABEL(development), 0); gtk_widget_add_css_class(development, "dim-label");
-    auto* legend = add(gtk_label_new(nullptr));
+    // Beam sketch on the left, trend on the right.
+    auto* legend = gtk_label_new(nullptr);
     gtk_label_set_markup(GTK_LABEL(legend), "最近 10 秒：<span foreground=\"#1fa8e0\">■ Real</span>　"
         "<span foreground=\"#e89a00\">■ Offset</span>　<span foreground=\"#2db84a\">■ Output</span>");
     gtk_label_set_xalign(GTK_LABEL(legend), 0);
-    auto* chart = add(c->chart.create()); gtk_widget_set_vexpand(chart, TRUE);
+    auto* chart = c->chart.create(); gtk_widget_set_vexpand(chart, TRUE); gtk_widget_set_hexpand(chart, TRUE);
+    auto* trend = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    gtk_box_append(GTK_BOX(trend), legend); gtk_box_append(GTK_BOX(trend), chart);
+    auto* bottom = add(row({c->beam.create(), trend})); gtk_widget_set_vexpand(bottom, TRUE);
+    gtk_widget_set_hexpand(trend, TRUE);
     c->timer = g_timeout_add(100, refresh, c);
     refresh(c);
     g_object_set_data_full(G_OBJECT(window), "controller", c, destroy);
