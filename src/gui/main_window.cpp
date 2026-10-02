@@ -2,6 +2,8 @@
 #include "gui/port_selector.hpp"
 #include "gui/roll_chart.hpp"
 #include "app/proxy_engine.hpp"
+#include <algorithm>
+#include <iterator>
 #include <sstream>
 #include <iomanip>
 namespace {
@@ -25,6 +27,10 @@ posmv::SweepConfig settings(Controller* c) {
     return config;
 }
 void configure(Controller* c) { c->engine.configure(settings(c)); }
+unsigned selected_baud(Controller* c) {
+    const auto index = std::min<std::size_t>(gtk_drop_down_get_selected(GTK_DROP_DOWN(c->baud)), std::size(posmv::standard_bauds) - 1);
+    return posmv::standard_bauds[index];
+}
 void finish_toggled(GtkWidget*, gpointer data) {
     auto* c = static_cast<Controller*>(data);
     c->engine.finish_at_center(gtk_check_button_get_active(GTK_CHECK_BUTTON(c->finish)));
@@ -66,8 +72,7 @@ void connect_clicked(GtkButton*, gpointer data) {
     try {
         configure(c);
         c->engine.stale_timeout(std::chrono::milliseconds(gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(c->timeout))));
-        c->engine.start(posmv::selected_port(c->input), posmv::selected_port(c->output),
-            gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(c->baud)));
+        c->engine.start(posmv::selected_port(c->input), posmv::selected_port(c->output), selected_baud(c));
     } catch (const std::exception& e) { gtk_label_set_text(GTK_LABEL(c->notice), e.what()); }
 }
 void scan_ports(GtkButton*, gpointer data) {
@@ -186,7 +191,13 @@ void activate(GtkApplication* application, gpointer) {
     posmv::avoid_port_of(c->output, c->input);
     c->scan = button("重新掃描 COM", G_CALLBACK(scan_ports));
     add(row({text("輸入 COM"), c->input, text("輸出 COM"), c->output, c->scan}));
-    c->baud = number(1200, 4000000, 1200, 38400, 7);
+    // Foolproof baud: standard values only, starting at POS MV's recommended 9600 for 25 Hz.
+    auto* bauds = gtk_string_list_new(nullptr);
+    for (const unsigned baud : posmv::standard_bauds) gtk_string_list_append(bauds, std::to_string(baud).c_str());
+    c->baud = gtk_drop_down_new(G_LIST_MODEL(bauds), nullptr);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(c->baud),
+        static_cast<guint>(std::ranges::find(posmv::standard_bauds, 9600u) - std::begin(posmv::standard_bauds)));
+    gtk_widget_set_tooltip_text(c->baud, "與 POS MV、MBES 的設定一致；手冊建議 25 Hz 至少 9600，200 Hz 需要 57600 以上");
     c->timeout = number(10, 60000, 10, 500, 5);
     gtk_widget_set_tooltip_text(c->timeout, "超過這個時間沒收到有效資料就判定過期：暫停輸出並關閉 Sweep；恢復後 Sweep 維持關閉");
     c->connect = button("連線", G_CALLBACK(connect_clicked));
