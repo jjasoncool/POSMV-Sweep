@@ -32,6 +32,9 @@ Requirements and decisions: [docs/acceptance.md](docs/acceptance.md),
 
 ## Build (MSYS2 UCRT64 shell)
 
+Install [MSYS2](https://www.msys2.org/) at the default `C:\msys64`, open the
+**MSYS2 UCRT64** shell (not MSYS or MINGW64), and from the repository root run:
+
 ```sh
 pacman -S --needed mingw-w64-ucrt-x86_64-{gcc,cmake,ninja,pkgconf,gtk4}
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -39,6 +42,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+- The programs are `build/posmv-sweep.exe` and `build/posmv-simulator.exe`.
 - GUI is on by default; `-DPOSMV_BUILD_GUI=OFF` builds CLI only.
 - After linking, the required UCRT64/GTK DLLs are copied beside both
   executables, so they start from Explorer without MSYS2 on `PATH`.
@@ -52,8 +56,16 @@ cmake --workflow --preset package
 
 This produces `build-release/POSMV-Sweep-<version>-win64.zip`: both programs,
 their DLLs, a Traditional Chinese user guide, third-party notices and licenses,
-and the pinned com0com 2.2.2.0 installer with its source. It downloads the
-com0com files on first use. See [docs/packaging.md](docs/packaging.md).
+and the pinned com0com 2.2.2.0 installer with its source. See
+[docs/packaging.md](docs/packaging.md).
+
+- Run it from the repository root in any shell (PowerShell, Git Bash or UCRT64);
+  the preset puts `C:\msys64\ucrt64\bin` on `PATH` itself. It needs the MSYS2
+  packages from the Build section.
+- The first run downloads the com0com files (SHA-256 checked) into
+  `build-release/third_party/`. Offline, put the two files there first.
+- Close any program started from `build-release/`; a running exe cannot be
+  relinked.
 
 ## License
 
