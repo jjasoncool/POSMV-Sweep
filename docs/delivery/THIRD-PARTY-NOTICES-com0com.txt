@@ -1,0 +1,6 @@
+com0com 2.2.2.0（虛擬 COM 驅動，只有 Simulator 的測試環境使用）
+  檔案：drivers\com0com-2.2.2.0-x64-fre-signed.zip（官方簽章版，未修改）
+  授權：GNU GPL v2 或更新版本，全文 licenses\com0com\license.txt
+  原始碼：drivers\source\com0com-2.2.2.0.zip（官方原始碼，未修改）
+  網站：https://sourceforge.net/projects/com0com/
+  com0com 是獨立程式，由 Simulator 在使用者同意（UAC）後另外安裝，不與本程式連結。

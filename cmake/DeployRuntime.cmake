@@ -1,5 +1,7 @@
 # Recursively deploy only DLLs available in this compiler's bin directory.
 # Windows system DLLs remain supplied by the operating system.
+# Run with -P, where no project sets policies: CMake 3.x would read IN_LIST the old way.
+cmake_policy(VERSION 3.25)
 if(NOT EXISTS "${APP}")
   message(FATAL_ERROR "Missing runtime deployment input: ${APP}")
 endif()

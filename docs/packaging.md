@@ -20,7 +20,7 @@ The preset sets the MSYS2 PATH itself. It configures a Release build in
 | `*.dll` | Recursive import scan of both programs, from the MSYS2 UCRT64 bin directory only (`cmake/DeployRuntime.cmake`) |
 | `README.txt` | `docs/delivery/README.txt`, the user guide in Traditional Chinese |
 | `LICENSE.txt` | Repository `LICENSE` (MIT) |
-| `THIRD-PARTY-NOTICES.txt`, `licenses/` | `cmake/ThirdPartyNotices.cmake` |
+| `THIRD-PARTY-NOTICES.txt`, `licenses/` | `cmake/ThirdPartyNotices.cmake`; fixed wording in `docs/delivery/THIRD-PARTY-NOTICES.txt.in` and `THIRD-PARTY-NOTICES-com0com.txt` |
 | `drivers/`, `licenses/com0com/` | `cmake/Com0com.cmake`; turn off with `-DPOSMV_BUNDLE_COM0COM=OFF` |
 | `BUILD-INFO.txt` | Version, git commit, date and build type |
 
