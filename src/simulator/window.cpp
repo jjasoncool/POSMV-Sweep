@@ -58,12 +58,11 @@ struct State {
     guint timer{};
     std::atomic<bool> tx_running{false}, rx_running{false}, rx_ready{false}, rx_failed{false};
     bool pending_start{};
-    GtkNativeDialog* chooser{};
+    GCancellable* choosing{};  // set while the file dialog is open; carries this State as "state"
     ~State() {
-        if (chooser) {
-            g_signal_handlers_disconnect_by_data(chooser, this);
-            gtk_native_dialog_destroy(chooser);
-            g_object_unref(chooser);
+        if (choosing) {  // the dialog may answer later: it must find no State
+            g_object_set_data(G_OBJECT(choosing), "state", nullptr);
+            g_cancellable_cancel(choosing);
         }
         sender.request_stop(); receiver.request_stop();
         if (sender.joinable()) sender.join();
@@ -362,23 +361,30 @@ gboolean refresh(gpointer p) {
     gtk_label_set_text(GTK_LABEL(s->rx_view),s->rx_status.c_str());
     return G_SOURCE_CONTINUE;
 }
-void selected(GtkNativeDialog* dialog, int response, gpointer p) {
-    static_cast<State*>(p)->chooser=nullptr;
-    if (response == GTK_RESPONSE_ACCEPT) {
-        auto* file = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(dialog));
-        auto* path = g_file_get_path(file);
-        if (path) gtk_editable_set_text(GTK_EDITABLE(static_cast<State*>(p)->file), path);
-        g_free(path); g_object_unref(file);
+void selected(GObject* dialog, GAsyncResult* result, gpointer data) {
+    auto* choosing=G_CANCELLABLE(data);
+    auto* file=gtk_file_dialog_open_finish(GTK_FILE_DIALOG(dialog),result,nullptr);  // null when cancelled
+    if(auto* s=static_cast<State*>(g_object_get_data(G_OBJECT(choosing),"state"))) {
+        s->choosing=nullptr;
+        if(file) {
+            auto* path=g_file_get_path(file);
+            if(path) gtk_editable_set_text(GTK_EDITABLE(s->file),path);
+            g_free(path);
+        }
     }
-    g_object_unref(dialog);
+    if(file) g_object_unref(file);
+    g_object_unref(choosing);
 }
 void choose(GtkButton* button, gpointer p) {
     auto* state=static_cast<State*>(p);
-    if(state->chooser) { gtk_native_dialog_show(state->chooser); return; }
-    auto* dialog = gtk_file_chooser_native_new("選擇 TSS1 capture", GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(button))), GTK_FILE_CHOOSER_ACTION_OPEN, "選擇", "取消");
-    g_signal_connect(dialog, "response", G_CALLBACK(selected), p);
-    state->chooser=GTK_NATIVE_DIALOG(dialog);
-    gtk_native_dialog_show(GTK_NATIVE_DIALOG(dialog));
+    if(state->choosing) return;  // already open
+    auto* dialog=gtk_file_dialog_new();
+    gtk_file_dialog_set_title(dialog,"選擇 TSS1 capture");
+    gtk_file_dialog_set_accept_label(dialog,"選擇");
+    state->choosing=g_cancellable_new();
+    g_object_set_data(G_OBJECT(state->choosing),"state",state);
+    gtk_file_dialog_open(dialog,GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(button))),state->choosing,selected,state->choosing);
+    g_object_unref(dialog);  // the open operation keeps its own reference
 }
 // Each data source shows only its own fields.
 void source_changed(GObject*, GParamSpec*, gpointer p) {
