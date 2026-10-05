@@ -30,6 +30,9 @@ UninstallPlan plan_uninstall(const VirtualComMachine& machine, const VirtualComO
 struct EnvironmentRoles { std::string tx, input, output, rx; };
 // Simulator TX -> Proxy Input on the first Owned Pair, Proxy Output -> Simulator RX on the second.
 std::optional<EnvironmentRoles> environment_roles(const VirtualComMachine& machine, const VirtualComOwnership& ownership);
+// The environment actions that make sense now; the window offers only these.
+struct EnvironmentActions { bool install{}, create{}, test{}, remove{}, uninstall{}; };
+EnvironmentActions available_actions(const VirtualComMachine& machine, const VirtualComOwnership& ownership);
 std::string format_ownership(const VirtualComOwnership& ownership);
 VirtualComOwnership parse_ownership(std::string_view text);
 // owned.json written by the retired PowerShell manager (per-user, before ownership moved machine-wide).

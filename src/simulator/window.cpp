@@ -19,6 +19,7 @@
 #include <iomanip>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <thread>
 #include <utility>
@@ -32,6 +33,7 @@ struct Environment {
     std::optional<std::array<std::string, 4>> roles;  // TX, Proxy Input, Proxy Output, RX
     std::string test, test_message;                   // self-test: passed, busy or failed
     std::string failure;                              // why the last action failed
+    std::string actions;                              // actions that make sense now, space separated
 };
 struct State {
     // 測試 page
@@ -268,9 +270,14 @@ void show_environment(State* s) {
         else if(e.test=="failed") text = "✘ "+text+"，但自測失敗："+e.test_message;
     }
     gtk_label_set_text(GTK_LABEL(s->environment),text.c_str());
-    gtk_widget_set_visible(s->install, e.known && !e.driver);
-    gtk_widget_set_visible(s->create, e.known && e.driver && !e.roles);
-    for(auto* button:s->environment_buttons) gtk_widget_set_sensitive(button,!busy);
+    // Each button appears only while its action makes sense, so no step can be taken out of order.
+    std::istringstream offered(e.actions); std::set<std::string> actions;
+    for(std::string action; offered>>action;) actions.insert(action);
+    for(auto* button:s->environment_buttons) {
+        const std::string action=static_cast<const char*>(g_object_get_data(G_OBJECT(button),"action"));
+        gtk_widget_set_visible(button, action=="inspect" || actions.contains(action));
+        gtk_widget_set_sensitive(button,!busy);
+    }
 }
 void run_action(State* s, const std::string& action) {
     if(s->manager.active()) return;
@@ -296,7 +303,7 @@ void select_port(GtkWidget* dropdown, const std::string& port) {
 }
 void environment_finished(State* s, unsigned long code) {
     const auto action=std::exchange(s->action,std::string{});
-    bool reported=false, ok=false; std::string roles, test; std::optional<std::string> driver; std::vector<std::string> messages;
+    bool reported=false, ok=false; std::string roles, test, actions; std::optional<std::string> driver; std::vector<std::string> messages;
     {  // closed before the next action, which deletes the file
         std::ifstream report(s->state_dir/"result.txt",std::ios::binary);
         reported=static_cast<bool>(report);
@@ -307,6 +314,7 @@ void environment_finished(State* s, unsigned long code) {
             else if(line.starts_with("roles=")) roles=line.substr(6);
             else if(line.starts_with("driver=")) driver=line.substr(7);
             else if(line.starts_with("test=")) test=line.substr(5);
+            else if(line.starts_with("actions=")) actions=line.substr(8);
         }
     }
     if(!reported) {
@@ -319,7 +327,7 @@ void environment_finished(State* s, unsigned long code) {
     for(const auto& message:messages) details+="\n"+message;
     gtk_label_set_text(GTK_LABEL(s->details),details.c_str());
     auto& e=s->env;
-    e.known=true; e.driver=driver;
+    e.known=true; e.driver=driver; e.actions=actions;
     std::istringstream fields(roles); std::array<std::string,4> found;
     if(fields>>found[0]>>found[1]>>found[2]>>found[3]) e.roles=found; else e.roles.reset();
     const std::string last=messages.empty() ? "" : messages.back();

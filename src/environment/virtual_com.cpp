@@ -97,6 +97,20 @@ std::optional<EnvironmentRoles> environment_roles(const VirtualComMachine& machi
     if (usable.size() < 2) return std::nullopt;
     return EnvironmentRoles{usable[0].a, usable[0].b, usable[1].a, usable[1].b};
 }
+EnvironmentActions available_actions(const VirtualComMachine& machine, const VirtualComOwnership& ownership) {
+    if (!machine.driver_installed) return {.install = true};
+    EnvironmentActions actions;
+    try {
+        actions.create = !plan_create(machine, ownership).empty();
+        actions.remove = !plan_remove(machine, ownership).empty();
+    } catch (const std::runtime_error&) {
+        return {};  // an Owned Pair was renamed elsewhere: change nothing
+    }
+    actions.test = environment_roles(machine, ownership).has_value();
+    // The driver goes last, once this application's pairs are removed.
+    actions.uninstall = !actions.remove && plan_uninstall(machine, ownership).allowed;
+    return actions;
+}
 std::string format_ownership(const VirtualComOwnership& ownership) {
     std::string text = std::string("driver-installed-by-us=") + (ownership.driver_installed_by_us ? "1" : "0") + "\n";
     for (const auto& pair : ownership.pairs) text += "pair=" + std::to_string(pair.id) + " " + pair.a + " " + pair.b + "\n";

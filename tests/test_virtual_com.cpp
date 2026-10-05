@@ -122,6 +122,56 @@ int main() {
             "no roles while an Owned Pair's ports are absent from Windows");
     }
     {
+        const auto actions = posmv::available_actions(machine_with_driver(), {});
+        auto machine = machine_with_driver();
+        machine.driver_installed = false;
+        const auto none = posmv::available_actions(machine, {});
+        check(none.install && !none.create && !none.test && !none.remove && !none.uninstall,
+            "without the driver only install is offered");
+        check(!actions.install && actions.create && !actions.test && !actions.remove && !actions.uninstall,
+            "a driver this application did not install offers create but never uninstall");
+    }
+    {
+        const auto actions = posmv::available_actions(machine_with_driver(), {{}, true});
+        check(!actions.install && actions.create && !actions.test && !actions.remove && actions.uninstall,
+            "our driver without pairs offers create and uninstall");
+    }
+    {
+        const auto actions = posmv::available_actions(machine_with_environment(), owned_environment());
+        check(!actions.install && !actions.create && actions.test && actions.remove && !actions.uninstall,
+            "a ready environment offers self-test and remove, uninstall only after the pairs are removed");
+    }
+    {
+        auto machine = machine_with_environment();
+        machine.pairs.pop_back();
+        machine.com_db = {0x01, 0x06};
+        machine.active_ports = {"COM1", "COM10", "COM11"};
+        const auto actions = posmv::available_actions(machine, owned_environment());
+        check(actions.create && !actions.test && actions.remove && !actions.uninstall,
+            "a missing Owned Pair offers create to replace it and remove");
+    }
+    {
+        auto machine = machine_with_environment();
+        machine.active_ports = {"COM1", "COM10", "COM11"};  // second pair's ports blocked by Windows
+        const auto actions = posmv::available_actions(machine, owned_environment());
+        check(!actions.create && !actions.test && actions.remove && !actions.uninstall,
+            "registered pairs whose ports never appeared offer only remove");
+    }
+    {
+        auto machine = machine_with_environment();
+        machine.pairs[0] = {0, "COM20", "COM21"};
+        const auto actions = posmv::available_actions(machine, owned_environment());
+        check(!actions.install && !actions.create && !actions.test && !actions.remove && !actions.uninstall,
+            "a renamed Owned Pair offers no change at all");
+    }
+    {
+        auto machine = machine_with_driver();
+        machine.pairs = {{2, "COM20", "COM21"}};  // Foreign Pair only
+        const auto actions = posmv::available_actions(machine, {{}, true});
+        check(actions.create && !actions.remove && !actions.uninstall,
+            "a Foreign Pair keeps our driver from being offered for uninstall");
+    }
+    {
         const auto loaded = posmv::parse_ownership(posmv::format_ownership(owned_environment()));
         check(loaded.driver_installed_by_us && loaded.pairs.size() == 2 &&
             loaded.pairs[0].id == 0 && loaded.pairs[0].a == "COM10" && loaded.pairs[0].b == "COM11" &&

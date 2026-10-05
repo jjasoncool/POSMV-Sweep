@@ -42,6 +42,7 @@ struct Report {
     std::optional<EnvironmentRoles> roles;
     std::optional<std::string> driver;  // installed com0com version
     std::string test;                   // self-test outcome: passed, busy or failed
+    std::optional<EnvironmentActions> actions;
     void say(std::string text) { messages.push_back(std::move(text)); }
 };
 // Thrown when another program, usually a connected Proxy, holds a port the self-test needs.
@@ -537,6 +538,13 @@ void write_report(const fs::path& file, const Report& report) {
         text += "roles=" + report.roles->tx + " " + report.roles->input + " " + report.roles->output + " " + report.roles->rx + "\n";
     if (report.driver) text += "driver=" + *report.driver + "\n";
     if (!report.test.empty()) text += "test=" + report.test + "\n";
+    if (report.actions) {
+        const std::pair<bool, const char*> names[] = {{report.actions->install, "install"}, {report.actions->create, "create"},
+            {report.actions->test, "test"}, {report.actions->remove, "remove"}, {report.actions->uninstall, "uninstall"}};
+        text += "actions=";
+        for (const auto& [offered, name] : names) if (offered) text += std::string(name) + " ";
+        text += "\n";
+    }
     fs::create_directories(file.parent_path());
     write_text_atomically(file, text);
 }
@@ -573,6 +581,8 @@ int run_virtual_com_worker() {
     try {
         if (const auto directory = setup_directory()) report.driver = driver_version(*directory);
     } catch (const std::exception&) {}
+    // ...and the actions that make sense next, so it offers only those.
+    try { report.actions = available_actions(read_machine(), load_ownership(legacy)); } catch (const std::exception&) {}
     try { write_report(result, report); } catch (...) { return 3; }
     return report.ok ? 0 : 1;
 }
