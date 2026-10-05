@@ -55,14 +55,19 @@ Left of the trend chart, a beam sketch shows the ship from the stern. Its parts:
 - The ship leans with Real Roll, labelled above it.
 - A grey sector is the MBES range (±limit, default 10°), around the hull's
   down axis, so it leans with the ship.
-- The MBES steers the beam relative to the hull by the Roll it receives. A red
-  line, labelled `Output`, shows that angle.
-- When |Output| exceeds the limit, the line turns dashed and an orange solid
-  line, labelled `實際`, stops at the limit: where the MBES can actually steer,
-  assuming it holds at its limit.
-- In the water, the Output line points at the Offset angle; positive is to the
-  right. The port/starboard side still needs commissioning.
+- Both lines are angles from straight down, as in the trend chart; positive is
+  to the right. The port/starboard side still needs commissioning.
+- A red solid line, labelled `波束`, is the expected beam. The model assumes the
+  MBES steers relative to the hull by the Roll it receives (Output), up to its
+  limit: beam = clamp(Output, ±limit) − Real. It is not read from the MBES.
+- Within the limit the beam equals the Offset. Beyond it, an orange dashed line,
+  labelled `目標`, shows the Offset the beam could not reach.
+- Bottom left: how far the MBES turns relative to the hull (`MBES 轉`), and
+  either the limit or `已達上限` in orange.
 - Lines are grey while nothing is sent.
+
+The trend chart draws the same expected beam as a red line over the Offset. The
+two lines part only where the limit clips the beam.
 
 There is no separate message area, so warnings never shift the layout:
 - The Output value turns orange while it exceeds the MBES limit, and the

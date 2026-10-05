@@ -8,7 +8,7 @@
 namespace posmv {
 // UI-thread only, bounded ten-second monitoring history; never schedules output.
 class RollChart {
-    struct Point { double time; std::array<double,3> values; };
+    struct Point { double time; std::array<double,4> values; };  // Real, Offset, Output, expected beam
     std::deque<Point> points_;
     GtkWidget* area_{};
     static double now() {
@@ -21,8 +21,9 @@ class RollChart {
         double limit=10;
         for(const auto& p:self.points_) for(double v:p.values) if(!std::isnan(v)) limit=std::max(limit,std::abs(v)*1.1);
         cairo_set_source_rgb(cr,0.4,0.4,0.4); cairo_move_to(cr,0,height/2.0); cairo_line_to(cr,width,height/2.0); cairo_stroke(cr);
-        const double colors[3][3]={{0.2,0.8,1},{1,0.7,0.1},{0.3,1,0.4}};
-        for(unsigned series=0;series<3;++series) {
+        // The beam is drawn last, over the Offset it should cover until the limit clips it.
+        const double colors[4][3]={{0.2,0.8,1},{1,0.7,0.1},{0.3,1,0.4},{1,0.3,0.3}};
+        for(unsigned series=0;series<4;++series) {
             cairo_set_source_rgb(cr,colors[series][0],colors[series][1],colors[series][2]);
             cairo_set_line_width(cr,1.5); bool first=true;
             for(const auto& p:self.points_) {
@@ -40,8 +41,8 @@ public:
         gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(area_),draw,this,nullptr);
         return area_;
     }
-    void add(double real,double offset,double output) {
-        const auto time=now(); points_.push_back({time,{real,offset,output}});
+    void add(double real,double offset,double output,double beam) {
+        const auto time=now(); points_.push_back({time,{real,offset,output,beam}});
         while(!points_.empty() && (points_.front().time<time-10 || points_.size()>200)) points_.pop_front();
         if(area_) gtk_widget_queue_draw(area_);
     }
@@ -49,7 +50,7 @@ public:
     void break_line() {
         if(points_.empty() || std::isnan(points_.back().values[0])) return;
         const double none=std::nan("");
-        points_.push_back({now(),{none,none,none}});
+        points_.push_back({now(),{none,none,none,none}});
     }
 };
 }

@@ -1,6 +1,7 @@
 #pragma once
 #include <gtk/gtk.h>
 #include <pango/pangocairo.h>
+#include "motion/sweep.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -8,8 +9,8 @@
 namespace posmv {
 // UI-thread only sketch, seen from the stern: the ship leans with Real Roll (positive to the
 // right), and the MBES steers the beam relative to the hull by the Roll it receives, but only
-// within its limit. Dashed: the Output we send. Solid: where the MBES can actually steer. In the
-// water the dashed beam is at the Offset angle. The port/starboard side still needs commissioning.
+// within its limit. Solid: the expected beam. Dashed: the target (Offset), drawn only when the
+// limit keeps the beam from it. The port/starboard side still needs commissioning.
 class BeamView {
     GtkWidget* area_{};
     double real_deg_{}, output_deg_{}, limit_deg_ = 10;
@@ -31,7 +32,6 @@ class BeamView {
         const double cx = width / 2.0, water = height * 0.5, length = height - water - 0.3 * u;
         const double roll = self.active_ ? self.real_deg_ : 0;
         const double limit = self.limit_deg_, output = self.active_ ? self.output_deg_ : 0;
-        const double actual = std::clamp(output, -limit, limit);
         // World angles from straight down, positive to the right: the hull's down axis leans to -roll.
         const double axis = -roll;
         auto at = [&](double angle, double r) { return std::pair{cx + r * std::sin(angle * degree), water + r * std::cos(angle * degree)}; };
@@ -67,12 +67,14 @@ class BeamView {
         cairo_line_to(cr, 0.45 * u, -2.85 * u);
         cairo_stroke(cr);
         cairo_restore(cr);
+        // Both lines are angles from straight down, the same frame as the trend chart: dashed orange
+        // is the target (the Offset), solid red where the beam should end up.
         const bool clipped = self.active_ && std::abs(output) > limit;
+        const double target = output - roll, beam = expected_beam(roll, output, limit);
         const double red[] = {0.82, 0.1, 0.1}, orange[] = {0.9, 0.45, 0.0}, grey[] = {0.62, 0.62, 0.62};
-        const double* beam = !self.active_ ? grey : clipped ? orange : red;
-        if (clipped) {  // dashed: the Output we send, beyond the MBES range
-            const auto [x, y] = at(axis + output, length);
-            cairo_set_source_rgb(cr, red[0], red[1], red[2]);
+        if (clipped) {  // only beyond the limit do target and beam part
+            const auto [x, y] = at(target, length);
+            cairo_set_source_rgb(cr, orange[0], orange[1], orange[2]);
             cairo_set_line_width(cr, 2);
             const double dashes[] = {6, 4};
             cairo_set_dash(cr, dashes, 2, 0);
@@ -81,13 +83,14 @@ class BeamView {
             cairo_stroke(cr);
             cairo_set_dash(cr, nullptr, 0, 0);
         }
-        const auto [bx, by] = at(axis + actual, length);  // solid: where the MBES can steer
-        cairo_set_source_rgb(cr, beam[0], beam[1], beam[2]);
+        const double* colour = self.active_ ? red : grey;
+        const auto [bx, by] = at(self.active_ ? beam : 0, length);
+        cairo_set_source_rgb(cr, colour[0], colour[1], colour[2]);
         cairo_set_line_width(cr, 4);
         cairo_move_to(cr, cx, water);
         cairo_line_to(cr, bx, by);
         cairo_stroke(cr);
-        char value[48];
+        char value[64];
         cairo_set_source_rgb(cr, 0.1, 0.1, 0.1);
         if (self.active_) std::snprintf(value, sizeof(value), "Roll %+.1f°", roll);
         else std::snprintf(value, sizeof(value), "Roll —");
@@ -97,27 +100,29 @@ class BeamView {
         cairo_move_to(cr, cx - w / 2.0, 2);
         pango_cairo_show_layout(cr, layout);
         g_object_unref(layout);
-        cairo_set_source_rgb(cr, grey[0] - 0.2, grey[1] - 0.2, grey[2] - 0.2);
-        std::snprintf(value, sizeof(value), "MBES ±%.0f°", limit);
+        // Bottom left, two short lines clear of the beam: how far the instrument turns relative to the hull.
+        if (clipped) cairo_set_source_rgb(cr, orange[0], orange[1], orange[2]);
+        else cairo_set_source_rgb(cr, grey[0] - 0.2, grey[1] - 0.2, grey[2] - 0.2);
+        if (self.active_) {
+            std::snprintf(value, sizeof(value), "MBES 轉 %+.1f°", std::clamp(output, -limit, limit));
+            text(cr, widget, value, 2, height - 28, false, width);
+        }
+        if (clipped) std::snprintf(value, sizeof(value), "已達上限");
+        else std::snprintf(value, sizeof(value), self.active_ ? "上限 ±%.0f°" : "MBES 上限 ±%.0f°", limit);
         text(cr, widget, value, 2, height - 10, false, width);
         if (!self.active_) return;
-        // Labels sit just outside the lines: Output beyond the dashed one, the actual angle inside the solid one.
-        const bool right = output >= 0;
+        // Labels sit beside their lines: the target's beyond it, the beam's on the other side.
         const double label = 0.55 * length, spread = 4;
+        const bool right = clipped ? target > beam : beam >= 0;
+        const auto [lx, ly] = at(beam + (clipped == right ? -spread : spread), label);
+        cairo_set_source_rgb(cr, red[0], red[1], red[2]);
+        std::snprintf(value, sizeof(value), "波束 %+.1f°", beam);
+        text(cr, widget, value, lx, ly, clipped == right, width);
         if (clipped) {
-            const auto [ox, oy] = at(axis + output + (right ? spread : -spread), label);
-            cairo_set_source_rgb(cr, red[0], red[1], red[2]);
-            std::snprintf(value, sizeof(value), "Output %+.1f°", output);
-            text(cr, widget, value, ox, oy, !right, width);
-            const auto [ix, iy] = at(axis + actual - (right ? spread : -spread), label);
+            const auto [tx, ty] = at(target + (right ? spread : -spread), label);
             cairo_set_source_rgb(cr, orange[0], orange[1], orange[2]);
-            std::snprintf(value, sizeof(value), "實際 %+.1f°", actual);
-            text(cr, widget, value, ix, iy, right, width);
-        } else {
-            const auto [ox, oy] = at(axis + output + (right ? spread : -spread), label);
-            cairo_set_source_rgb(cr, red[0], red[1], red[2]);
-            std::snprintf(value, sizeof(value), "Output %+.1f°", output);
-            text(cr, widget, value, ox, oy, !right, width);
+            std::snprintf(value, sizeof(value), "目標 %+.1f°", target);
+            text(cr, widget, value, tx, ty, !right, width);
         }
     }
 public:
@@ -126,7 +131,8 @@ public:
         gtk_widget_set_size_request(area_, 260, 170);
         gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(area_), draw, this, nullptr);
         gtk_widget_set_tooltip_text(area_, "從船尾往船頭看。船依 Real Roll 傾斜；灰色扇形是 MBES 能補償的範圍，跟著船轉。"
-            "虛線：送出的 Output；實線：MBES 實際能轉到的角度（限制在上限內）。左右舷待現場確認");
+            "角度都從垂直往下量。紅色實線：預期的波束方向，假設 MBES 依收到的 Roll 補償、最多轉到上限，不是 MBES 回報的值。"
+            "橘色虛線：目標（Offset），只在 MBES 轉不到時出現。左右舷待現場確認");
         return area_;
     }
     // `active` is false while no output is sent.

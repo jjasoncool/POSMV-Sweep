@@ -174,7 +174,7 @@ gboolean refresh(gpointer data) {
     gtk_label_set_markup(GTK_LABEL(c->rate_info), rate.str().c_str());
     const double limit = gtk_spin_button_get_value(GTK_SPIN_BUTTON(c->limit));
     const bool sending = s.state == posmv::ProxyState::Active && s.output_count;
-    if (sending) c->chart.add(s.real, s.offset, s.output);
+    if (sending) c->chart.add(s.real, s.offset, s.output, posmv::expected_beam(s.real, s.output, limit));
     else c->chart.break_line();
     c->beam.update(s.real, s.output, limit, sending);
     std::ostringstream motion, diagnostics;
@@ -299,8 +299,11 @@ void activate(GtkApplication* application, gpointer) {
     // Beam sketch on the left, trend on the right.
     auto* legend = gtk_label_new(nullptr);
     gtk_label_set_markup(GTK_LABEL(legend), "最近 10 秒：<span foreground=\"#1fa8e0\">■ Real</span>　"
-        "<span foreground=\"#e89a00\">■ Offset</span>　<span foreground=\"#2db84a\">■ Output</span>");
+        "<span foreground=\"#e89a00\">■ Offset</span>　<span foreground=\"#2db84a\">■ Output</span>　"
+        "<span foreground=\"#e04040\">■ 波束</span>");
     gtk_label_set_xalign(GTK_LABEL(legend), 0);
+    gtk_widget_set_tooltip_text(legend, "波束：預期的波束方向（從垂直往下量），假設 MBES 依收到的 Roll 補償、最多轉到 MBES 穩定上限。"
+        "沒超過上限時與 Offset 重疊；分開的地方就是 MBES 轉不到的部分。這是推算值，不是 MBES 回報的值");
     auto* chart = c->chart.create(); gtk_widget_set_vexpand(chart, TRUE); gtk_widget_set_hexpand(chart, TRUE);
     auto* trend = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
     gtk_box_append(GTK_BOX(trend), legend); gtk_box_append(GTK_BOX(trend), chart);

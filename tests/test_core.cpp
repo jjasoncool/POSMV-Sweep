@@ -56,5 +56,10 @@ int main(int argc, char** argv) {
         config.enabled = false;
         check(posmv::synthetic_roll(config, 1) == 0);
         check(posmv::compose_roll(2, posmv::synthetic_roll(config, 1)).roll_deg == 2);
+        // Within the limit the instrument cancels the real roll, so the beam follows the Offset.
+        check(std::abs(posmv::expected_beam(1.03, 3.25, 10) - 2.22) < 1e-9);
+        // Beyond it the instrument stops at the limit: Roll +13.6, Output +13.6 leaves the beam at -3.6.
+        check(std::abs(posmv::expected_beam(13.6, 13.6, 10) + 3.6) < 1e-9);
+        check(std::abs(posmv::expected_beam(-13.6, -13.6, 10) - 3.6) < 1e-9);
     } catch (const std::exception& e) { std::cerr << e.what() << '\n'; return 1; }
 }

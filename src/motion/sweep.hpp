@@ -49,4 +49,10 @@ inline ComposedRoll compose_roll(double real, double synthetic) {
     const double sum = real + synthetic;
     return {std::clamp(sum, -90.0, 90.0), sum < -90 || sum > 90};
 }
+// Where the beam should point, from straight down with the Offset's sign, assuming the instrument
+// steers by the Roll it receives but no further than ±limit from the hull. Equals the Offset within
+// the limit. A model, not a reading from the instrument.
+inline double expected_beam(double real, double output, double limit) {
+    return std::clamp(output, -limit, limit) - real;
+}
 }
